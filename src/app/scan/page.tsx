@@ -37,7 +37,7 @@ export default function ScanPage() {
     try {
       const text   = await recognizeReceipt(file, p => setPct(p))
       console.log('RAW:', text.split('\n').map((l,i) => `${i}: "${l}"`).join('\n'))
-      const result = parseReceipt(text)
+      const result = await parseReceipt(text)
       console.log('ITEMS:', result.line_items)
       setParsed(prev => {
       const merged = prev ? mergeReceipts(prev, result) : result
@@ -156,11 +156,31 @@ export default function ScanPage() {
           </div>
 
           {step === 'scanning' && (
-            <div style={{marginTop:16,padding:'14px 16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
-              <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Reading receipt… {pct}%</p>
-              <div className="progress-bar"><div className="progress-fill" style={{width:`${pct}%`}}/></div>
-            </div>
-          )}
+          <div style={{marginTop:16,padding:'16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
+            {pct < 100 ? (
+              <>
+                <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>
+                  Reading receipt… {pct}%
+                </p>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{width:`${pct}%`}}/>
+                </div>
+              </>
+            ) : (
+              <>
+                <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>
+                  Analyzing with AI…
+                </p>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{width:'100%',background:'var(--amber)',animation:'pulse 1.5s ease-in-out infinite'}}/>
+                </div>
+                <p style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>
+                  Extracting items, prices and discounts
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
           {step === 'saving' && (
             <div style={{marginTop:16,padding:'14px 16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>

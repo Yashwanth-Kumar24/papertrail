@@ -293,3 +293,8 @@ input:focus, select:focus { border-color: var(--green); }
   .pg-title { font-size: 18px; }
   .search-wrap { gap: 8px; }
 }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}

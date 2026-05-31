@@ -1,6 +1,7 @@
 import type { ReceiptParser } from './types'
 import type { ParsedReceipt, ParsedItem } from '../lib/types'
 import { costcoParser } from './costco'
+import { parseWithAI } from './ai-parser'
 
 const RE_PRICE = /^(.+?)\s{2,}([\d.]+)\s*$/
 const RE_DATE  = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/
@@ -46,11 +47,26 @@ const genericParser: ReceiptParser = {
 
 const PARSERS: ReceiptParser[] = [costcoParser, genericParser]
 
-export function parseReceipt(text: string): ParsedReceipt {
+// ── Toggle via env var ─────────────────────────────────────
+// .env.local: NEXT_PUBLIC_USE_AI_PARSER=true  → AI
+//             NEXT_PUBLIC_USE_AI_PARSER=false → regex (free)
+const USE_AI = process.env.NEXT_PUBLIC_USE_AI_PARSER === 'true'
+
+export async function parseReceipt(text: string): Promise<ParsedReceipt> {
+  if (USE_AI) {
+    try {
+      return await parseWithAI(text)
+    } catch (e) {
+      console.warn('AI parsing failed, falling back to regex:', e)
+      // Auto-fallback to regex if AI fails
+    }
+  }
+  // Regex path — sync, wrapped in Promise for consistent interface
   const parser = PARSERS.find(p => p.canParse(text)) ?? genericParser
   return parser.parse(text)
 }
 
+// mergeReceipts unchanged — works for both AI and regex paths
 export function mergeReceipts(base: ParsedReceipt, add: ParsedReceipt): ParsedReceipt {
   const seen = new Set(base.line_items.map(i => i.item_code ? `c:${i.item_code}` : `n:${i.name}`))
   const offset = base.line_items.length
@@ -60,8 +76,8 @@ export function mergeReceipts(base: ParsedReceipt, add: ParsedReceipt): ParsedRe
 
   return {
     ...base,
-    total:       add.total      ?? base.total,
-    line_items:  [...base.line_items, ...newItems],
+    total:        add.total ?? base.total,
+    line_items:   [...base.line_items, ...newItems],
     raw_ocr_text: base.raw_ocr_text + '\n\n---\n\n' + add.raw_ocr_text,
   }
 }
