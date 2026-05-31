@@ -11,10 +11,10 @@ function mmddToIso(d: string) {
 // itemcode = 2-8 digits
 // name = uppercase words/chars
 // price = digits.2digits at end
-const RE_ITEM = /(\d{2,8})\s+([A-Z][A-Z0-9,.\s*\/-]{1,25}?)\s{1,3}(\d{1,4}\.\d{2})\b/
+const RE_ITEM = /(\d{2,8})\s+(\*{0,3}[-"A-Z0-9][A-Z0-9,.\s*\/_-]{1,28}?)\s{1,3}(\d{1,4}\.\d{2})\b/
 
 // Discount: 0000xxxxx / itemcode  amount
-const RE_DISC = /0{3,}\d+\s*\/\s*(\d{2,8})\s+([\d.]+)/
+const RE_DISC = /0{3,}\d+\s*[\/7]\s*(\d{2,8})\s+([\d.]+)/
 
 // Skip lines that are definitely not items
 const SKIP = [
@@ -41,6 +41,8 @@ export const costcoParser: ReceiptParser = {
     const lines = text
       .split('\n')
       .map(l => l.replace(/\s+/g, ' ').trim().toUpperCase())
+      .map(l => l.replace(/^([EAFH])(\d{2,8})\s/, '$1 $2 '))
+      .map(l => l.replace(/["""'']/g, ''))
       .filter(Boolean)
 
     let storeName = '', location = '', warehouseNum = ''
@@ -55,7 +57,7 @@ export const costcoParser: ReceiptParser = {
       // Store name block
       if (/COSTCO WHOLESALE/i.test(line) && !storeName) {
         for (let j = i+1; j < Math.min(i+5, lines.length); j++) {
-          const sm = lines[j].match(/^(.+?)\s+#(\d{2,4})/)
+          const sm = lines[j].match(/^(.+?)\s+#(\d{2,5})/)
           if (sm) {
             storeName = lines[j].trim()
             warehouseNum = sm[2]
@@ -145,14 +147,16 @@ export const costcoParser: ReceiptParser = {
     
     // Fallback: extract city from storeName e.g. "REDMOND #1225" → "Redmond"
     if (!location && storeName) {
-      const cityMatch = storeName.match(/^([A-Z][A-Z\s]+?)\s+#\d+/)
+      // Clean store name — remove leading junk before known city names
+      const cleaned = storeName.replace(/^[^A-Z]*/, '').trim()
+      const cityMatch = cleaned.match(/^([A-Z][A-Z\s]+?)\s+#\d+/)
       if (cityMatch) {
         location = cityMatch[1].trim()
           .split(' ')
           .map((w: string) => w.charAt(0) + w.slice(1).toLowerCase())
           .join(' ')
       }
-    }
+}
 
     return {
       store: {

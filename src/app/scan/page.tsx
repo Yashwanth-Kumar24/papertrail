@@ -26,7 +26,11 @@ export default function ScanPage() {
   const uploadRef = useRef<HTMLInputElement>(null)
   const [saveImg,  setSaveImg]  = useState(false)
   const [imgFile,  setImgFile]  = useState<File | null>(null)
+  const [editStore, setEditStore] = useState('')
   const [location, setLocation] = useState('')
+  const [editDate, setEditDate] = useState('')
+  const [editTime, setEditTime] = useState('')
+  const [editTotal, setEditTotal] = useState('')
 
   const process = useCallback(async (file: File) => {
     setError(''); setStep('scanning'); setPct(0)
@@ -36,11 +40,15 @@ export default function ScanPage() {
       const result = parseReceipt(text)
       console.log('ITEMS:', result.line_items)
       setParsed(prev => {
-        const merged = prev ? mergeReceipts(prev, result) : result
-        setItems(merged.line_items)
-        setLocation(merged.store.location ?? '')
-        return merged
-      })
+      const merged = prev ? mergeReceipts(prev, result) : result
+      setItems(merged.line_items)
+      setEditStore(merged.store.name ?? '')
+      setLocation(merged.store.location ?? '')
+      setEditDate(merged.purchase_date ?? '')
+      setEditTime(merged.purchase_time ?? '')
+      setEditTotal(merged.total != null ? String(merged.total) : '')
+      return merged
+})
       setStep('review')
     } catch {
       setError('OCR failed — try a clearer or flatter photo.')
@@ -83,10 +91,17 @@ export default function ScanPage() {
     setStep('saving')
     try {
       const final: ParsedReceipt = {
-        ...parsed,
-        line_items: items,
-        store: { ...parsed.store, location: location || undefined }
+      ...parsed,
+      purchase_date:  editDate  || parsed.purchase_date,
+      purchase_time:  editTime  || parsed.purchase_time,
+      total:          parseFloat(editTotal) || parsed.total,
+      line_items:     items,
+      store: {
+        ...parsed.store,
+        name:     editStore || parsed.store.name,
+        location: location  || undefined,
       }
+    }
       const id = await saveReceipt(final)
 
       if (saveImg && imgFile) {
@@ -112,8 +127,12 @@ export default function ScanPage() {
     }
   }
 
-  const reset = () => { setParsed(null); setItems([]); setImgFile(null)
-    setSaveImg(false); setStep('capture'); setError(''); setLocation('') }
+  const reset = () => {
+    setParsed(null); setItems([]); setImgFile(null)
+    setSaveImg(false); setStep('capture'); setError('')
+    setEditStore(''); setLocation(''); setEditDate('')
+    setEditTime(''); setEditTotal('')
+  }
 
   return (
     <main className="page">
@@ -168,33 +187,56 @@ export default function ScanPage() {
           <div className="review-panel">
             <h3>Review before saving</h3>
 
-            <div className="rp-row"><span className="rp-label">Store</span><span className="rp-val">{parsed.store.name}</span></div>
-            {parsed.store.location && <div className="rp-row"><span className="rp-label">Location</span><span className="rp-val">{parsed.store.location}</span></div>}
             <div className="rp-row">
-              <span className="rp-label">Location</span>
-              <input
-                suppressHydrationWarning
-                value={location}
-                onChange={e => setLocation(e.target.value)}
-                placeholder="e.g. Redmond, WA"
-                style={{
-                  fontSize:13, padding:'2px 6px', textAlign:'right',
-                  border:'1px solid transparent', borderRadius:4,
-                  width:180, fontFamily:'var(--sans)',
-                }}
-                onFocus={e => e.target.style.borderColor = 'var(--green)'}
-                onBlur={e  => e.target.style.borderColor = 'transparent'}
-              />
-            </div>
-            <div className="rp-row"><span className="rp-label">Date</span><span className="rp-val">{parsed.purchase_date ?? 'Not detected'}</span></div>
-            {parsed.purchase_time && <div className="rp-row"><span className="rp-label">Time</span><span className="rp-val">{parsed.purchase_time}</span></div>}
+            <span className="rp-label">Store</span>
+            <input suppressHydrationWarning value={editStore} onChange={e => setEditStore(e.target.value)}
+              placeholder="Store name"
+              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
+              onFocus={e => e.target.style.borderColor='var(--green)'}
+              onBlur={e  => e.target.style.borderColor='transparent'}
+            />
+          </div>
+          <div className="rp-row">
+            <span className="rp-label">Location</span>
+            <input suppressHydrationWarning value={location} onChange={e => setLocation(e.target.value)}
+              placeholder="e.g. Redmond, WA"
+              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
+              onFocus={e => e.target.style.borderColor='var(--green)'}
+              onBlur={e  => e.target.style.borderColor='transparent'}
+            />
+          </div>
+          <div className="rp-row">
+            <span className="rp-label">Date</span>
+            <input suppressHydrationWarning type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
+              onFocus={e => e.target.style.borderColor='var(--green)'}
+              onBlur={e  => e.target.style.borderColor='transparent'}
+            />
+          </div>
+          <div className="rp-row">
+            <span className="rp-label">Time</span>
+            <input suppressHydrationWarning type="time" value={editTime} onChange={e => setEditTime(e.target.value)}
+              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
+              onFocus={e => e.target.style.borderColor='var(--green)'}
+              onBlur={e  => e.target.style.borderColor='transparent'}
+            />
+          </div>
+          <div className="rp-row">
+            <span className="rp-label">Total</span>
+            <input suppressHydrationWarning type="number" step="0.01" value={editTotal} onChange={e => setEditTotal(e.target.value)}
+              placeholder="0.00"
+              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:100,fontFamily:'var(--mono)'}}
+              onFocus={e => e.target.style.borderColor='var(--green)'}
+              onBlur={e  => e.target.style.borderColor='transparent'}
+            />
+          </div>
             {parsed.transaction_id && <div className="rp-row"><span className="rp-label">Txn ID</span><span className="rp-val" style={{fontSize:12}}>{parsed.transaction_id}</span></div>}
-            <div className="rp-row"><span className="rp-label">Total</span><span className="rp-val">{parsed.total != null ? money(parsed.total) : 'Not detected'}</span></div>
+            
 
             {/* Items */}
             <div className="rp-items">
               <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8,paddingBottom:6,borderBottom:'1px solid var(--border)'}}>
-                {items.length} items — click any field to edit
+                {items.filter(i => i.discount_amount >= 0 && i.final_price > 0).length} ITEMS — CLICK ANY FIELD TO EDIT
               </div>
 
               {items.map((item, i) => (
