@@ -11,7 +11,7 @@ function mmddToIso(d: string) {
 // itemcode = 2-8 digits
 // name = uppercase words/chars
 // price = digits.2digits at end
-const RE_ITEM = /(\d{2,8})\s+([A-Z][A-Z0-9,.\s*\/-]{2,28}?)\s{1,}(\d{1,4}\.\d{2})\s*$/
+const RE_ITEM = /(\d{2,8})\s+([A-Z][A-Z0-9,.\s*\/-]{1,25}?)\s{1,3}(\d{1,4}\.\d{2})\b/
 
 // Discount: 0000xxxxx / itemcode  amount
 const RE_DISC = /0{3,}\d+\s*\/\s*(\d{2,8})\s+([\d.]+)/
@@ -48,7 +48,6 @@ export const costcoParser: ReceiptParser = {
     let total: number | undefined
     const rawItems: ParsedItem[] = []
     let order = 0
-    let inItems = false
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]
@@ -71,10 +70,7 @@ export const costcoParser: ReceiptParser = {
       }
 
       // Member line — start of items section
-      if (/MEMB|NEMB/i.test(line) && /\d{6,}/.test(line)) {
-        inItems = true
-        continue
-      }
+      if (/MEMB|NEMB/i.test(line) && /\d{6,}/.test(line)) continue
 
       // Date + time
       const dm = line.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})/)

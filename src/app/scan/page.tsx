@@ -32,7 +32,9 @@ export default function ScanPage() {
     setError(''); setStep('scanning'); setPct(0)
     try {
       const text   = await recognizeReceipt(file, p => setPct(p))
+      console.log('RAW:', text.split('\n').map((l,i) => `${i}: "${l}"`).join('\n'))
       const result = parseReceipt(text)
+      console.log('ITEMS:', result.line_items)
       setParsed(prev => {
         const merged = prev ? mergeReceipts(prev, result) : result
         setItems(merged.line_items)
