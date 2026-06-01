@@ -107,16 +107,12 @@ export default function ScanPage() {
       if (saveImg && imgFile) {
         const url = await uploadReceiptImage(
           imgFile, id, 0,
-          parsed.store.brand,
-          parsed.purchase_date ?? new Date().toISOString().split('T')[0]
+          final.store.brand,
+          final.purchase_date ?? new Date().toISOString().split('T')[0]
         )
-        // Write URL back to the receipt row
         if (url) {
           const { supabase } = await import('@/lib/supabase')
-          await supabase
-            .from('receipts')
-            .update({ image_urls: [url] })
-            .eq('id', id)
+          await supabase.from('receipts').update({ image_urls: [url] }).eq('id', id)
         }
       }
 
@@ -146,7 +142,7 @@ export default function ScanPage() {
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" strokeLinecap="round" strokeLinejoin="round"/>
               <circle cx="12" cy="13" r="4" strokeLinecap="round"/>
             </svg>
-            <p>Take a photo or upload — OCR runs on your device</p>
+            <p>Flat on a table, good lighting, phone directly above — better photo means better results</p>
             <button className="btn-primary btn-full" onClick={() => photoRef.current?.click()}>
               📷 Take photo
             </button>
@@ -331,8 +327,18 @@ export default function ScanPage() {
               </label>
             </div>
 
-            <button onClick={reset} style={{marginTop:10,background:'none',border:'none',fontSize:12,color:'var(--ink3)',cursor:'pointer',padding:0}}>
-              Start over
+            <button
+              onClick={reset}
+              style={{
+                marginTop:12, background:'none',
+                border:'1px solid var(--border)',
+                borderRadius:'var(--r)',
+                fontSize:13, color:'var(--ink2)',
+                cursor:'pointer', padding:'8px 16px',
+                width:'100%', fontFamily:'var(--sans)',
+              }}
+            >
+              ✕ Discard and scan again
             </button>
           </div>
         )}

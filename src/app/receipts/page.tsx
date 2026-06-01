@@ -1,18 +1,25 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { getReceipts, getStoreBrands, getReceiptDates, getStats, deleteReceipt } from '@/lib/queries'
+import {
+  getReceipts, getStoreBrands, getReceiptDates,
+  getStats, deleteReceipt
+} from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
+import { BRAND_LABELS } from '@/lib/types'
 
-const fmt   = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-const money = (n: number)   => `$${Number(n).toFixed(2)}`
+const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
+  .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+const money = (n: number) => `$${Number(n).toFixed(2)}`
 
 function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div style={{background:'#fff',borderRadius:12,padding:'24px 28px',maxWidth:360,width:'90%',boxShadow:'0 8px 32px rgba(0,0,0,0.12)'}}>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px 28px',maxWidth:360,width:'90%'}}>
         <h3 style={{fontSize:16,fontWeight:600,marginBottom:8}}>Delete receipt?</h3>
-        <p style={{fontSize:13,color:'var(--ink2)',marginBottom:20}}>This will permanently delete the receipt, all its items, and any saved image. This cannot be undone.</p>
+        <p style={{fontSize:13,color:'var(--ink2)',marginBottom:20}}>
+          Permanently deletes the receipt, all items, and any saved image. Cannot be undone.
+        </p>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
           <button onClick={onCancel} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>
             Cancel
@@ -27,25 +34,26 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
 }
 
 export default function ReceiptsPage() {
-  const [receipts,       setReceipts]       = useState<Receipt[]>([])
-  const [brands,         setBrands]         = useState<string[]>([])
-  const [dates,          setDates]          = useState<string[]>([])
-  const [stats,          setStats]          = useState({ receipts: 0, total: 0, items: 0, savings: 0 })
-  const [brand,          setBrand]          = useState('all')
-  const [date,           setDate]           = useState('')
-  const [loading,        setLoading]        = useState(true)
-  const [confirmDelete,  setConfirmDelete]  = useState<string | null>(null)
-  const [deleting,       setDeleting]       = useState<string | null>(null)
+  const [receipts,      setReceipts]      = useState<Receipt[]>([])
+  const [brands,        setBrands]        = useState<string[]>([])
+  const [dates,         setDates]         = useState<string[]>([])
+  const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
+  const [brand,         setBrand]         = useState('all')
+  const [date,          setDate]          = useState('')
+  const [loading,       setLoading]       = useState(true)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleting,      setDeleting]      = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([getStoreBrands(), getReceiptDates(), getStats()]).then(([b, d, s]) => {
-      setBrands(b); setDates(d); setStats(s)
-    })
+    Promise.all([getStoreBrands(), getReceiptDates(), getStats()])
+      .then(([b, d, s]) => { setBrands(b); setDates(d); setStats(s) })
   }, [])
 
   useEffect(() => {
     setLoading(true)
-    getReceipts(brand, date || undefined).then(setReceipts).finally(() => setLoading(false))
+    getReceipts(brand, date || undefined)
+      .then(setReceipts)
+      .finally(() => setLoading(false))
   }, [brand, date])
 
   async function handleDelete(id: string) {
@@ -53,7 +61,6 @@ export default function ReceiptsPage() {
     try {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
-      // Refresh stats + dates after delete
       const [b, d, s] = await Promise.all([getStoreBrands(), getReceiptDates(), getStats()])
       setBrands(b); setDates(d); setStats(s)
     } catch {
@@ -87,8 +94,12 @@ export default function ReceiptsPage() {
 
       <div className="filters">
         {['all', ...brands].map(b => (
-          <button key={b} className={`pill ${brand === b ? 'active' : ''}`} onClick={() => setBrand(b)}>
-            {b === 'all' ? 'All stores' : b.charAt(0).toUpperCase() + b.slice(1)}
+          <button
+            key={b}
+            className={`pill ${brand === b ? 'active' : ''}`}
+            onClick={() => setBrand(b)}
+          >
+            {b === 'all' ? 'All stores' : (BRAND_LABELS[b] ?? b)}
           </button>
         ))}
         <select className="fsel" value={date} onChange={e => setDate(e.target.value)}>
@@ -109,7 +120,6 @@ export default function ReceiptsPage() {
         <div className="rcard-grid">
           {receipts.map(r => (
             <div key={r.id} className="rcard">
-              {/* Top — store + total */}
               <Link href={`/receipts/${r.id}`} style={{textDecoration:'none',color:'inherit',display:'block'}}>
                 <div className="rcard-head">
                   <div>
@@ -124,14 +134,10 @@ export default function ReceiptsPage() {
                     <div className="rcard-total">{money(r.total)}</div>
                   </div>
                 </div>
-
-                {/* Bottom — txn ID + actions */}
                 <div className="rcard-txn">
                   <span>{r.transaction_id ? `Txn: ${r.transaction_id}` : 'No txn ID'}</span>
                 </div>
               </Link>
-
-              {/* Action row */}
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4,borderTop:'1px solid var(--border)'}}>
                 <Link href={`/receipts/${r.id}`} style={{fontSize:13,fontWeight:500,color:'var(--green)',textDecoration:'none'}}>
                   View receipt →
@@ -139,12 +145,7 @@ export default function ReceiptsPage() {
                 <button
                   onClick={() => setConfirmDelete(r.id)}
                   disabled={deleting === r.id}
-                  style={{
-                    background:'none',border:'none',
-                    color:'var(--ink3)',cursor:'pointer',
-                    fontSize:12,fontWeight:500,padding:'2px 4px',
-                    borderRadius:4,transition:'color .12s',
-                  }}
+                  style={{background:'none',border:'none',color:'var(--ink3)',cursor:'pointer',fontSize:12,fontWeight:500,padding:'2px 4px',borderRadius:4}}
                   onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
                   onMouseLeave={e => (e.currentTarget.style.color = 'var(--ink3)')}
                 >

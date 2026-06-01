@@ -4,15 +4,18 @@ import { useParams, useRouter } from 'next/navigation'
 import { getReceiptById, deleteReceipt } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
 
-const fmt   = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
-const money = (n: number)   => `$${Number(n).toFixed(2)}`
+const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
+  .toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
+const money = (n: number) => `$${Number(n).toFixed(2)}`
 
 function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
     <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div style={{background:'#fff',borderRadius:12,padding:'24px 28px',maxWidth:360,width:'90%'}}>
         <h3 style={{fontSize:16,fontWeight:600,marginBottom:8}}>Delete receipt?</h3>
-        <p style={{fontSize:13,color:'var(--ink2)',marginBottom:20}}>This will permanently delete the receipt, all its items, and any saved image. This cannot be undone.</p>
+        <p style={{fontSize:13,color:'var(--ink2)',marginBottom:20}}>
+          Permanently deletes the receipt, all items, and any saved image. Cannot be undone.
+        </p>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
           <button onClick={onCancel} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>Cancel</button>
           <button onClick={onConfirm} style={{padding:'8px 16px',borderRadius:8,border:'none',background:'var(--red-bg)',color:'var(--red-tx)',fontSize:13,fontWeight:600,cursor:'pointer'}}>Yes, delete</button>
@@ -41,7 +44,7 @@ export default function ReceiptDetail() {
       await deleteReceipt(id)
       router.push('/receipts')
     } catch {
-      alert('Delete failed. Please try again.')
+      alert('Delete failed.')
       setDeleting(false)
       setConfirm(false)
     }
@@ -55,12 +58,7 @@ export default function ReceiptDetail() {
 
   return (
     <main className="page">
-      {confirm && (
-        <DeleteConfirm
-          onConfirm={handleDelete}
-          onCancel={() => setConfirm(false)}
-        />
-      )}
+      {confirm && <DeleteConfirm onConfirm={handleDelete} onCancel={() => setConfirm(false)}/>}
 
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
         <button className="back-link" onClick={() => router.back()}>← Back to receipts</button>
@@ -76,15 +74,26 @@ export default function ReceiptDetail() {
       <div className="detail-wrap">
         <div className="detail-side">
           <h2>{receipt.store_name}</h2>
-          {receipt.location && <div className="meta-row"><span className="meta-label">Location</span><span>{receipt.location}</span></div>}
+          {receipt.location && (
+            <div className="meta-row">
+              <span className="meta-label">Location</span>
+              <span style={{textAlign:'right',fontSize:13}}>{receipt.location}</span>
+            </div>
+          )}
           <div className="meta-row"><span className="meta-label">Date</span><span>{fmt(receipt.purchase_date)}</span></div>
-          {receipt.purchase_time && <div className="meta-row"><span className="meta-label">Time</span><span className="meta-val">{receipt.purchase_time.slice(0,5)}</span></div>}
-          {receipt.transaction_id && <div className="meta-row"><span className="meta-label">Txn ID</span><span className="meta-val" style={{fontSize:12}}>{receipt.transaction_id}</span></div>}
+          {receipt.purchase_time && (
+            <div className="meta-row"><span className="meta-label">Time</span><span className="meta-val">{receipt.purchase_time.slice(0,5)}</span></div>
+          )}
+          {receipt.transaction_id && (
+            <div className="meta-row"><span className="meta-label">Txn ID</span><span className="meta-val" style={{fontSize:12}}>{receipt.transaction_id}</span></div>
+          )}
           <div className="meta-row"><span className="meta-label">Items</span><span>{items.length}</span></div>
           {discounted.length > 0 && (
             <div className="meta-row">
               <span className="meta-label">Savings</span>
-              <span style={{color:'var(--green)',fontFamily:'var(--mono)'}}>{money(discounted.reduce((s,i) => s + i.discount_amount, 0))}</span>
+              <span style={{color:'var(--green)',fontFamily:'var(--mono)'}}>
+                {money(discounted.reduce((s,i) => s + i.discount_amount, 0))}
+              </span>
             </div>
           )}
           <div className="meta-row"><span className="meta-label">Total</span><span className="meta-val">{money(receipt.total)}</span></div>
@@ -109,7 +118,7 @@ export default function ReceiptDetail() {
                   <td style={{textAlign:'right',fontFamily:'var(--mono)',color:item.discount_amount > 0 ? 'var(--ink2)':'inherit',textDecoration:item.discount_amount > 0 ? 'line-through':'none'}}>
                     {money(item.original_price)}
                   </td>
-                  <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--red)',fontWeight:item.discount_amount > 0 ? 600 : 400}}>
+                  <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--red)',fontWeight:item.discount_amount > 0 ? 600:400}}>
                     {item.discount_amount > 0 ? `−${money(item.discount_amount)}` : '—'}
                   </td>
                   <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600,color:item.discount_amount > 0 ? 'var(--green)':'inherit'}}>
@@ -122,7 +131,6 @@ export default function ReceiptDetail() {
         </div>
       </div>
 
-      {/* Receipt image */}
       <div style={{marginTop:24}}>
         <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:12}}>
           Receipt image
@@ -137,24 +145,12 @@ export default function ReceiptDetail() {
                     alt={`Receipt ${i + 1}`}
                     onError={() => setImgErrors(prev => ({ ...prev, [i]: true }))}
                     onClick={() => window.open(url, '_blank')}
-                    style={{
-                      height: 320,
-                      width: 'auto',
-                      borderRadius: 8,
-                      border: '1px solid var(--border)',
-                      display: 'block',
-                      objectFit: 'contain',
-                      background: 'var(--cream2)',
-                      cursor: 'pointer',
-                    }}
+                    style={{height:320,width:'auto',borderRadius:8,border:'1px solid var(--border)',display:'block',objectFit:'contain',background:'var(--cream2)',cursor:'pointer'}}
                   />
                 ) : (
                   <div style={{padding:'16px 20px',background:'var(--cream2)',borderRadius:8,border:'1px dashed var(--border2)',fontSize:13,color:'var(--ink3)'}}>
                     Image failed to load —{' '}
-                    <span
-                      onClick={() => window.open(url, '_blank')}
-                      style={{color:'var(--green)',cursor:'pointer',textDecoration:'underline'}}
-                    >
+                    <span onClick={() => window.open(url, '_blank')} style={{color:'var(--green)',cursor:'pointer',textDecoration:'underline'}}>
                       open directly
                     </span>
                   </div>
@@ -168,7 +164,6 @@ export default function ReceiptDetail() {
           </div>
         )}
       </div>
-
     </main>
   )
 }

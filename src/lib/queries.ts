@@ -1,31 +1,18 @@
 import { supabase } from './supabase'
 import type { Receipt, ParsedReceipt, ItemHistory } from './types'
 
-// ── upsert store ────────────────────────────────────────────
-async function upsertStore(s: ParsedReceipt['store']): Promise<string> {
-  const { data, error } = await supabase
-    .from('stores')
-    .upsert({ brand: s.brand, name: s.name, location: s.location },
-             { onConflict: 'brand,name' })
-    .select('id').single()
-  if (error) throw new Error(error.message)
-  return data.id
-}
-
-// ── save receipt ────────────────────────────────────────────
+// ── Save receipt ───────────────────────────────────────────
 export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
-  const storeId = await upsertStore(parsed.store)
-
   const { data: rec, error: recErr } = await supabase
     .from('receipts')
     .insert({
-      store_id:       storeId,
+      brand:          parsed.store.brand,
       store_name:     parsed.store.name,
-      location:       parsed.store.location,
+      location:       parsed.store.location ?? null,
       purchase_date:  parsed.purchase_date,
-      purchase_time:  parsed.purchase_time,
-      transaction_id: parsed.transaction_id,
-      total:          parsed.total ?? 0,
+      purchase_time:  parsed.purchase_time  ?? null,
+      transaction_id: parsed.transaction_id ?? null,
+      total:          parsed.total          ?? 0,
       raw_ocr_text:   parsed.raw_ocr_text,
     })
     .select('id').single()
@@ -34,7 +21,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
 
   const rows = parsed.line_items.map(li => ({
     receipt_id:      rec.id,
-    item_code:       li.item_code ?? null,
+    item_code:       li.item_code       ?? null,
     name:            li.name,
     original_price:  li.original_price,
     discount_amount: li.discount_amount,
@@ -42,65 +29,15 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
     sort_order:      li.sort_order,
   }))
 
-  const { error: itemErr } = await supabase.from('receipt_items').insert(rows)
-  if (itemErr) throw new Error(itemErr.message)
+  if (rows.length) {
+    const { error: itemErr } = await supabase.from('receipt_items').insert(rows)
+    if (itemErr) throw new Error(itemErr.message)
+  }
 
   return rec.id
 }
 
-// ── get receipts list ───────────────────────────────────────
-export async function getReceipts(brand?: string, date?: string) {
-  let q = supabase
-    .from('receipts')
-    .select('*, store:stores(brand, name, location)')
-    .order('purchase_date', { ascending: false })
-    .order('created_at',    { ascending: false })
-
-  if (date)  q = q.eq('purchase_date', date)
-
-  const { data, error } = await q
-  if (error) throw new Error(error.message)
-
-  let rows = (data ?? []) as Receipt[]
-  if (brand && brand !== 'all')
-    rows = rows.filter(r => r.store?.brand === brand)
-
-  return rows
-}
-
-// ── get single receipt with items ──────────────────────────
-export async function getReceiptById(id: string): Promise<Receipt | null> {
-  const { data, error } = await supabase
-    .from('receipts')
-    .select('*, store:stores(*), receipt_items(*)')
-    .eq('id', id)
-    .single()
-  if (error) return null
-  // Sort items client-side
-  if (data?.receipt_items) {
-    data.receipt_items.sort((a: any, b: any) => a.sort_order - b.sort_order)
-  }
-  return data as Receipt
-}
-
-// ── get distinct dates ──────────────────────────────────────
-export async function getReceiptDates(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('receipts')
-    .select('purchase_date')
-    .order('purchase_date', { ascending: false })
-  if (error) return []
-  return [...new Set((data ?? []).map((r: any) => r.purchase_date))]
-}
-
-// ── get distinct brands ─────────────────────────────────────
-export async function getStoreBrands(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('stores').select('brand')
-  if (error) return []
-  return [...new Set((data ?? []).map((s: any) => s.brand))]
-}
-
+// ── Upload image ───────────────────────────────────────────
 export async function uploadReceiptImage(
   file: File,
   receiptId: string,
@@ -121,6 +58,74 @@ export async function uploadReceiptImage(
   return data.publicUrl
 }
 
+// ── Get receipts list ──────────────────────────────────────
+export async function getReceipts(
+  brand?: string,
+  date?: string
+): Promise<Receipt[]> {
+  let q = supabase
+    .from('receipts')
+    .select('*')
+    .order('purchase_date', { ascending: false })
+    .order('created_at',    { ascending: false })
+
+  if (brand && brand !== 'all') q = q.eq('brand', brand)
+  if (date)                     q = q.eq('purchase_date', date)
+
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Receipt[]
+}
+
+// ── Get single receipt ─────────────────────────────────────
+export async function getReceiptById(id: string): Promise<Receipt | null> {
+  const { data, error } = await supabase
+    .from('receipts')
+    .select('*, receipt_items(*)')
+    .eq('id', id)
+    .single()
+
+  if (error) return null
+  if (data?.receipt_items) {
+    data.receipt_items.sort((a: any, b: any) => a.sort_order - b.sort_order)
+  }
+  return data as Receipt
+}
+
+// ── Get distinct brands ────────────────────────────────────
+export async function getStoreBrands(): Promise<string[]> {
+  const { data } = await supabase
+    .from('receipts')
+    .select('brand')
+  if (!data) return []
+  return [...new Set(data.map((r: any) => r.brand).filter(Boolean))]
+}
+
+// ── Get distinct dates ─────────────────────────────────────
+export async function getReceiptDates(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('receipts')
+    .select('purchase_date')
+    .order('purchase_date', { ascending: false })
+  if (error) return []
+  return [...new Set((data ?? []).map((r: any) => r.purchase_date))]
+}
+
+// ── Stats ──────────────────────────────────────────────────
+export async function getStats() {
+  const { data: recs }  = await supabase.from('receipts').select('total')
+  const { data: items } = await supabase.from('receipt_items').select('discount_amount')
+  const total   = (recs   ?? []).reduce((s: number, r: any) => s + Number(r.total), 0)
+  const savings = (items  ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
+  return {
+    receipts: (recs  ?? []).length,
+    total,
+    items:    (items ?? []).length,
+    savings,
+  }
+}
+
+// ── Delete receipt ─────────────────────────────────────────
 export async function deleteReceipt(id: string): Promise<void> {
   const { data } = await supabase
     .from('receipts')
@@ -128,16 +133,16 @@ export async function deleteReceipt(id: string): Promise<void> {
     .eq('id', id)
     .single()
 
-  if (data?.image_urls && data.image_urls.length > 0) {
+  if (data?.image_urls?.length) {
     const paths = data.image_urls
       .map((url: string) => {
         const marker = '/receipt-images/'
-        const idx = url.indexOf(marker)
+        const idx    = url.indexOf(marker)
         return idx !== -1 ? url.slice(idx + marker.length) : null
       })
       .filter(Boolean)
 
-    if (paths.length > 0) {
+    if (paths.length) {
       await supabase.storage.from('receipt-images').remove(paths)
     }
   }
@@ -146,7 +151,7 @@ export async function deleteReceipt(id: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
-// ── search items with price history ────────────────────────
+// ── Search items with price history ───────────────────────
 export async function searchItems(
   query: string,
   brand?: string,
@@ -154,33 +159,32 @@ export async function searchItems(
   dateTo?: string,
   priceMax?: number,
 ): Promise<ItemHistory[]> {
-  let q = supabase.from('item_purchase_history').select('*')
+  if (!query.trim()) return []
 
-  if (query.trim()) {
-    const isCode  = /^\d+$/.test(query.trim())
-    const isPrice = /^\$?[\d.]+$/.test(query.trim()) && query.includes('.')
+  const q     = query.trim()
+  const isCode  = /^\d+$/.test(q)
+  const isPrice = /^\$?[\d.]+$/.test(q) && q.includes('.')
 
-    if (isCode && !isPrice) {
-      q = q.eq('item_code', query.trim())
-    } else if (isPrice) {
-      const price = parseFloat(query.replace('$',''))
-      // show items within ±$1 of the typed price
-      q = q.gte('final_price', price - 1).lte('final_price', price + 1)
-    } else {
-      q = q.ilike('name', `%${query.trim()}%`)
-    }
+  let dbq = supabase.from('item_purchase_history').select('*')
+
+  if (isCode && !isPrice) {
+    dbq = dbq.eq('item_code', q)
+  } else if (isPrice) {
+    const price = parseFloat(q.replace('$', ''))
+    dbq = dbq.gte('final_price', price - 1).lte('final_price', price + 1)
+  } else {
+    dbq = dbq.ilike('name', `%${q}%`)
   }
 
-  if (brand && brand !== 'all') q = q.eq('store_name', brand)
-  if (dateFrom) q = q.gte('purchase_date', dateFrom)
-  if (dateTo)   q = q.lte('purchase_date', dateTo)
-  if (priceMax) q = q.lte('final_price', priceMax)
+  if (brand && brand !== 'all') dbq = dbq.eq('brand', brand)
+  if (dateFrom) dbq = dbq.gte('purchase_date', dateFrom)
+  if (dateTo)   dbq = dbq.lte('purchase_date', dateTo)
+  if (priceMax) dbq = dbq.lte('final_price', priceMax)
 
-  q = q.order('purchase_date', { ascending: false }).limit(300)
+  dbq = dbq.order('purchase_date', { ascending: false }).limit(300)
 
-  const { data, error } = await q
+  const { data, error } = await dbq
   if (error) throw new Error(error.message)
-
   return groupHistory(data ?? [])
 }
 
@@ -188,7 +192,9 @@ function groupHistory(rows: any[]): ItemHistory[] {
   const map = new Map<string, ItemHistory>()
 
   for (const row of rows) {
-    const key = row.item_code ? `c:${row.item_code}` : `n:${row.name.toUpperCase()}`
+    const key = row.item_code
+      ? `c:${row.item_code}`
+      : `n:${row.name.toUpperCase().trim()}`
 
     if (!map.has(key)) {
       map.set(key, {
@@ -207,12 +213,14 @@ function groupHistory(rows: any[]): ItemHistory[] {
       receipt_id:      row.receipt_id,
       purchase_date:   row.purchase_date,
       store_name:      row.store_name,
+      brand:           row.brand,
       location:        row.location,
       transaction_id:  row.transaction_id,
       original_price:  row.original_price,
       discount_amount: row.discount_amount,
       final_price:     row.final_price,
     })
+
     if (row.final_price < e.min_price) e.min_price = row.final_price
     if (row.final_price > e.max_price) e.max_price = row.final_price
   }
@@ -225,19 +233,76 @@ function groupHistory(rows: any[]): ItemHistory[] {
     e.trend = latest > earliest ? 'up' : latest < earliest ? 'down' : 'stable'
   }
 
-  return [...map.values()].sort((a, b) => b.purchases.length - a.purchases.length)
+  return [...map.values()]
+    .sort((a, b) => b.purchases.length - a.purchases.length)
 }
 
-// ── stats for dashboard ─────────────────────────────────────
-export async function getStats() {
-  const { data: recs }  = await supabase.from('receipts').select('total')
-  const { data: items } = await supabase.from('receipt_items').select('discount_amount')
-  const total   = (recs   ?? []).reduce((s: number, r: any) => s + Number(r.total), 0)
-  const savings = (items  ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
+export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
+  let q = supabase
+    .from('receipts')
+    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total')
+    .order('purchase_date', { ascending: false })
+
+  if (dateFrom) q = q.gte('purchase_date', dateFrom)
+  if (dateTo)   q = q.lte('purchase_date', dateTo)
+
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+
+  const receipts = (data ?? []) as Receipt[]
+
+  // Total spent + saved
+  const { data: items } = await supabase
+    .from('receipt_items')
+    .select('receipt_id, discount_amount')
+
+  const itemMap = new Map<string, number>()
+  for (const item of items ?? []) {
+    const prev = itemMap.get(item.receipt_id) ?? 0
+    itemMap.set(item.receipt_id, prev + Number(item.discount_amount))
+  }
+
+  const receiptIds = new Set(receipts.map(r => r.id))
+  let totalSaved = 0
+  for (const [id, saved] of itemMap.entries()) {
+    if (receiptIds.has(id)) totalSaved += saved
+  }
+
+  const totalSpent = receipts.reduce((s, r) => s + Number(r.total), 0)
+  const avgPerTrip = receipts.length ? totalSpent / receipts.length : 0
+
+  // By brand
+  const brandMap = new Map<string, { name: string; count: number; total: number }>()
+  for (const r of receipts) {
+    const key = r.brand
+    const prev = brandMap.get(key) ?? { name: r.store_name, count: 0, total: 0 }
+    brandMap.set(key, {
+      name:  prev.name,
+      count: prev.count + 1,
+      total: prev.total + Number(r.total),
+    })
+  }
+  const byBrand = [...brandMap.entries()]
+    .map(([brand, v]) => ({ brand, ...v }))
+    .sort((a, b) => b.total - a.total)
+
+  // By month
+  const monthMap = new Map<string, number>()
+  for (const r of receipts) {
+    const month = r.purchase_date.slice(0, 7) // YYYY-MM
+    monthMap.set(month, (monthMap.get(month) ?? 0) + Number(r.total))
+  }
+  const byMonth = [...monthMap.entries()]
+    .map(([month, total]) => ({ month, total }))
+    .sort((a, b) => a.month.localeCompare(b.month))
+
   return {
-    receipts: (recs  ?? []).length,
-    total,
-    items:    (items ?? []).length,
-    savings,
+    totalSpent,
+    totalSaved,
+    receiptCount: receipts.length,
+    avgPerTrip,
+    byBrand,
+    byMonth,
+    receipts,
   }
 }
