@@ -148,7 +148,7 @@ export default function ScanPage() {
   }
 
   const save = async () => {
-    if (!parsed) return
+    if (!parsed || step === 'saving') return
     setStep('saving')
     try {
       const final: ParsedReceipt = {

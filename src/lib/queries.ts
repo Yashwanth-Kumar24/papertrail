@@ -3,6 +3,22 @@ import type { Receipt, ParsedReceipt, ItemHistory } from './types'
 
 // ── Save receipt ───────────────────────────────────────────
 export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
+  if (parsed.transaction_id) {
+    const { data: existing, error: existingErr } = await supabase
+      .from('receipts')
+      .select('id')
+      .eq('store_name', parsed.store.name)
+      .eq('purchase_date', parsed.purchase_date)
+      .eq('transaction_id', parsed.transaction_id)
+      .maybeSingle()
+
+    if (existingErr) throw new Error(existingErr.message)
+
+    if (existing?.id) {
+      throw new Error('This receipt is already saved.')
+    }
+  }
+
   const { data: rec, error: recErr } = await supabase
     .from('receipts')
     .insert({
@@ -15,7 +31,8 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       total:          parsed.total          ?? 0,
       raw_ocr_text:   parsed.raw_ocr_text,
     })
-    .select('id').single()
+    .select('id')
+    .single()
 
   if (recErr) throw new Error(recErr.message)
 

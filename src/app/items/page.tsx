@@ -2,6 +2,8 @@
 import { useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { searchItems } from '@/lib/queries'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useEffect } from 'react'
 import type { ItemHistory } from '@/lib/types'
 
 const fmt = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
@@ -77,7 +79,8 @@ export default function ItemsPage() {
   const [loading,  setLoading]  = useState(false)
   const [searched, setSearched] = useState(false)
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const run = useCallback((q: string) => {
     if (!q.trim()) { setResults([]); setSearched(false); return }
     clearTimeout(debounce.current)
@@ -85,7 +88,16 @@ export default function ItemsPage() {
       setLoading(true); setSearched(true)
       searchItems(q).then(setResults).finally(() => setLoading(false))
     }, 350)
-  }, [])
+  }, [debounce])
+
+  useEffect(() => {
+    const q = searchParams.get('q')
+
+    if (q) {
+      setQuery(q)
+      run(q)
+    }
+  }, [searchParams, run])
 
   return (
     <main className="page">
@@ -101,7 +113,18 @@ export default function ItemsPage() {
             suppressHydrationWarning
             data-gramm="false"
             value={query}
-            onChange={e => { setQuery(e.target.value); run(e.target.value) }}
+            onChange={e => {
+              const value = e.target.value
+
+              setQuery(value)
+              run(value)
+
+              router.replace(
+                value
+                  ? `/items?q=${encodeURIComponent(value)}`
+                  : '/items'
+              )
+            }}
             placeholder="Name, item code, or price (e.g. 11.99)…"
             autoComplete="off"
           />
