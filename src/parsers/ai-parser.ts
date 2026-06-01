@@ -1,4 +1,5 @@
 import type { ParsedReceipt } from '../lib/types'
+import { BRAND_LABELS } from '../lib/types'
 
 export async function parseWithAI(text: string): Promise<ParsedReceipt> {
   const res = await fetch('/api/parse', {
@@ -39,32 +40,14 @@ export async function parseWithAI(text: string): Promise<ParsedReceipt> {
   }
 }
 
-// Canonical display names — always consistent regardless of what AI returns
-const CANONICAL_NAMES: Record<string, string> = {
-  'costco':      'Costco Wholesale',
-  'walmart':     'Walmart',
-  'whole-foods': 'Whole Foods Market',
-  'ross':        'Ross Dress for Less',
-  'target':      'Target',
-  'safeway':     'Safeway',
-  'trader-joes': "Trader Joe's",
-  'kroger':      'Kroger',
-  'cvs':         'CVS Pharmacy',
-  'walgreens':   'Walgreens',
-  'aldi':        'ALDI',
-  'home-depot':  'The Home Depot',
-  'lowes':       "Lowe's",
-}
-
 function normalizeStoreName(brand: string, aiName: string): string {
-  // If we have a canonical name for this brand, always use it
-  if (CANONICAL_NAMES[brand]) return CANONICAL_NAMES[brand]
-  // For 'other' stores use whatever AI returned
+  // Use canonical name for known brands; keep AI-returned name for 'other' stores
+  if (brand !== 'other' && BRAND_LABELS[brand]) return BRAND_LABELS[brand]
   return aiName || 'Unknown Store'
 }
 
 function normalizeBrand(aiBrand: string, storeName: string): string {
-  const known = Object.keys(CANONICAL_NAMES)
+  const known = Object.keys(BRAND_LABELS)
   if (aiBrand && known.includes(aiBrand.toLowerCase())) {
     return aiBrand.toLowerCase()
   }

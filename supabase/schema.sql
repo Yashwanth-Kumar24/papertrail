@@ -54,3 +54,7 @@ alter table receipt_items disable row level security;
 create unique index receipts_unique_txn
 on receipts (store_name, purchase_date, transaction_id, total)
 where transaction_id is not null;
+
+create unique index receipts_unique_notxn
+on receipts (store_name, purchase_date, coalesce(purchase_time::text, ''), total)
+where transaction_id is null;

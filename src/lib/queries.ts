@@ -4,6 +4,7 @@ import type { Receipt, ParsedReceipt, ItemHistory } from './types'
 // ── Save receipt ───────────────────────────────────────────
 export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
   if (parsed.transaction_id) {
+    // Primary: exact match by transaction ID
     const { data: existing, error: existingErr } = await supabase
       .from('receipts')
       .select('id')
@@ -13,10 +14,22 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       .maybeSingle()
 
     if (existingErr) throw new Error(existingErr.message)
+    if (existing?.id) throw new Error('This receipt is already saved.')
+  } else {
+    // Fallback: match by store + date + total (+ time if available)
+    let dupQ = supabase
+      .from('receipts')
+      .select('id')
+      .eq('store_name', parsed.store.name)
+      .eq('purchase_date', parsed.purchase_date!)
+      .eq('total', parsed.total ?? 0)
+      .is('transaction_id', null)
 
-    if (existing?.id) {
-      throw new Error('This receipt is already saved.')
-    }
+    if (parsed.purchase_time) dupQ = dupQ.eq('purchase_time', parsed.purchase_time)
+
+    const { data: existing, error: existingErr } = await dupQ.maybeSingle()
+    if (existingErr) throw new Error(existingErr.message)
+    if (existing?.id) throw new Error('This receipt is already saved.')
   }
 
   const { data: rec, error: recErr } = await supabase
@@ -77,7 +90,7 @@ export async function uploadReceiptImage(
 
 // ── Get receipts list ──────────────────────────────────────
 export async function getReceipts(
-  brand?: string,
+  storeName?: string,
   date?: string
 ): Promise<Receipt[]> {
   let q = supabase
@@ -86,8 +99,8 @@ export async function getReceipts(
     .order('purchase_date', { ascending: false })
     .order('created_at',    { ascending: false })
 
-  if (brand && brand !== 'all') q = q.eq('brand', brand)
-  if (date)                     q = q.eq('purchase_date', date)
+  if (storeName) q = q.eq('store_name', storeName)
+  if (date)      q = q.eq('purchase_date', date)
 
   const { data, error } = await q
   if (error) throw new Error(error.message)
@@ -109,23 +122,12 @@ export async function getReceiptById(id: string): Promise<Receipt | null> {
   return data as Receipt
 }
 
-// ── Get distinct brands ────────────────────────────────────
-export async function getStoreBrands(): Promise<string[]> {
+// ── Get store_name+date pairs for coordinated filter dropdowns ──
+export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string }[]> {
   const { data } = await supabase
     .from('receipts')
-    .select('brand')
-  if (!data) return []
-  return [...new Set(data.map((r: any) => r.brand).filter(Boolean))]
-}
-
-// ── Get distinct dates ─────────────────────────────────────
-export async function getReceiptDates(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('receipts')
-    .select('purchase_date')
-    .order('purchase_date', { ascending: false })
-  if (error) return []
-  return [...new Set((data ?? []).map((r: any) => r.purchase_date))]
+    .select('store_name, purchase_date')
+  return (data ?? []) as { store_name: string; purchase_date: string }[]
 }
 
 // ── Stats ──────────────────────────────────────────────────

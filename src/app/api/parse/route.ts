@@ -184,7 +184,7 @@ export async function POST(req: NextRequest) {
           { role: 'system', content: PROMPT },
           { role: 'user',   content: text },
         ],
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0,
       }),
     })

@@ -1,12 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import {
-  getReceipts, getStoreBrands, getReceiptDates,
+  getReceipts, getReceiptMeta,
   getStats, deleteReceipt
 } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
-import { BRAND_LABELS } from '@/lib/types'
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
@@ -35,34 +34,61 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
 
 export default function ReceiptsPage() {
   const [receipts,      setReceipts]      = useState<Receipt[]>([])
-  const [brands,        setBrands]        = useState<string[]>([])
-  const [dates,         setDates]         = useState<string[]>([])
+  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
-  const [brand,         setBrand]         = useState('all')
+  const [storeName,     setStoreName]     = useState('')
   const [date,          setDate]          = useState('')
   const [loading,       setLoading]       = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
 
   useEffect(() => {
-    Promise.all([getStoreBrands(), getReceiptDates(), getStats()])
-      .then(([b, d, s]) => { setBrands(b); setDates(d); setStats(s) })
+    Promise.all([getReceiptMeta(), getStats()])
+      .then(([m, s]) => { setAllMeta(m); setStats(s) })
   }, [])
 
   useEffect(() => {
     setLoading(true)
-    getReceipts(brand, date || undefined)
+    getReceipts(storeName || undefined, date || undefined)
       .then(setReceipts)
       .finally(() => setLoading(false))
-  }, [brand, date])
+  }, [storeName, date])
+
+  // Stores that have receipts on the selected date (or all stores if no date selected)
+  const availableStores = useMemo(() => {
+    const source = date ? allMeta.filter(m => m.purchase_date === date) : allMeta
+    return [...new Set(source.map(m => m.store_name))].sort()
+  }, [allMeta, date])
+
+  // Dates that have receipts for the selected store (or all dates if no store selected)
+  const availableDates = useMemo(() => {
+    const source = storeName ? allMeta.filter(m => m.store_name === storeName) : allMeta
+    return [...new Set(source.map(m => m.purchase_date))].sort().reverse()
+  }, [allMeta, storeName])
+
+  function handleStoreChange(s: string) {
+    setStoreName(s)
+    if (date) {
+      const validDates = (s ? allMeta.filter(m => m.store_name === s) : allMeta).map(m => m.purchase_date)
+      if (!validDates.includes(date)) setDate('')
+    }
+  }
+
+  function handleDateChange(d: string) {
+    setDate(d)
+    if (storeName) {
+      const validStores = (d ? allMeta.filter(m => m.purchase_date === d) : allMeta).map(m => m.store_name)
+      if (!validStores.includes(storeName)) setStoreName('')
+    }
+  }
 
   async function handleDelete(id: string) {
     setDeleting(id)
     try {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
-      const [b, d, s] = await Promise.all([getStoreBrands(), getReceiptDates(), getStats()])
-      setBrands(b); setDates(d); setStats(s)
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats()])
+      setAllMeta(m); setStats(s)
     } catch {
       alert('Delete failed. Please try again.')
     } finally {
@@ -93,18 +119,15 @@ export default function ReceiptsPage() {
       </div>
 
       <div className="filters">
-        {['all', ...brands].map(b => (
-          <button
-            key={b}
-            className={`pill ${brand === b ? 'active' : ''}`}
-            onClick={() => setBrand(b)}
-          >
-            {b === 'all' ? 'All stores' : (BRAND_LABELS[b] ?? b)}
-          </button>
-        ))}
-        <select className="fsel" value={date} onChange={e => setDate(e.target.value)}>
+        <select className="fsel" value={storeName} onChange={e => handleStoreChange(e.target.value)}>
+          <option value="">All stores</option>
+          {availableStores.map(s => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <select className="fsel" value={date} onChange={e => handleDateChange(e.target.value)}>
           <option value="">All dates</option>
-          {dates.map(d => <option key={d} value={d}>{fmt(d)}</option>)}
+          {availableDates.map(d => <option key={d} value={d}>{fmt(d)}</option>)}
         </select>
       </div>
 

@@ -8,7 +8,6 @@ import { saveReceipt, uploadReceiptImage } from '@/lib/queries'
 
 type Step = 'capture' | 'scanning' | 'review' | 'saving'
 
-const money = (n: number) => `$${Number(n).toFixed(2)}`
 
 const blankItem = (order: number): ParsedItem => ({
   item_code: '', name: '', original_price: 0,
@@ -38,27 +37,8 @@ function TipPopover() {
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{position:'fixed',inset:0,zIndex:10}}/>
-          <div style={{
-            position:'absolute',
-            top:'calc(100% + 8px)',
-            left:'50%',
-            transform:'translateX(-50%)',
-            zIndex:20,
-            background:'#fff',
-            border:'1px solid var(--border)',
-            borderRadius:'var(--rl)',
-            padding:'12px 14px',
-            width:220,
-            boxShadow:'0 4px 16px rgba(0,0,0,0.10)',
-          }}>
-            <div style={{
-              position:'absolute',top:-5,left:'50%',
-              transform:'translateX(-50%) rotate(45deg)',
-              width:9,height:9,
-              background:'#fff',
-              border:'1px solid var(--border)',
-              borderBottom:'none',borderRight:'none',
-            }}/>
+          <div className="tip-popover">
+            <div className="tip-caret"/>
             <div style={{fontSize:12,fontWeight:600,color:'var(--ink)',marginBottom:8}}>
               📸 Tips for best results
             </div>
@@ -107,11 +87,14 @@ export default function ScanPage() {
       setParsed(prev => {
         const merged = prev ? mergeReceipts(prev, result) : result
         setItems(merged.line_items)
-        setEditStore(merged.store.name ?? '')
-        setLocation(merged.store.location ?? '')
-        setEditDate(merged.purchase_date ?? '')
-        setEditTime(merged.purchase_time ?? '')
-        setEditTotal(merged.total != null ? String(merged.total) : '')
+        // On first scan populate all fields; on subsequent scans keep user edits
+        if (!prev) {
+          setEditStore(merged.store.name ?? '')
+          setLocation(merged.store.location ?? '')
+          setEditDate(merged.purchase_date ?? '')
+          setEditTime(merged.purchase_time ?? '')
+          setEditTotal(merged.total != null ? String(merged.total) : '')
+        }
         return merged
       })
       setStep('review')
@@ -152,6 +135,11 @@ export default function ScanPage() {
 
   const save = async () => {
     if (!parsed || step === 'saving') return
+    const resolvedDate = editDate || parsed.purchase_date
+    if (!resolvedDate) {
+      setError('Please enter the receipt date before saving.')
+      return
+    }
     setStep('saving')
     try {
       const final: ParsedReceipt = {
@@ -375,7 +363,7 @@ export default function ScanPage() {
             </div>
 
             <div className="save-bar">
-              <button className="btn-secondary" style={{fontSize:12,padding:'7px 14px'}} onClick={() => photoRef.current?.click()}>
+              <button className="btn-secondary" style={{fontSize:12,padding:'7px 14px'}} onClick={() => uploadRef.current?.click()}>
                 + Add section
               </button>
               <button className="btn-primary" onClick={save}>

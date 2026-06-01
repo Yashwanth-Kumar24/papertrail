@@ -7,8 +7,8 @@ export async function recognizeReceipt(
   const useGoogle = process.env.NEXT_PUBLIC_USE_GOOGLE_OCR === 'true'
 
   if (useGoogle) {
-    onProgress?.(20, 'encoding')
-    const base64 = await toBase64(source)
+    onProgress?.(10, 'compressing')
+    const base64 = await compressForVision(source)
     onProgress?.(50, 'reading with Google Vision')
 
     const res = await fetch('/api/ocr', {
@@ -39,6 +39,36 @@ export async function recognizeReceipt(
   })
 
   return result.data.text
+}
+
+// Resize to max 2048px + compress to JPEG before sending to Google Vision (10MB base64 limit)
+async function compressForVision(source: File | string): Promise<string> {
+  if (typeof source === 'string') return source.split(',')[1] ?? source
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = reject
+    reader.onload = e => {
+      const img = new Image()
+      img.onerror = reject
+      img.onload = () => {
+        const MAX = 2048
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+        const canvas = document.createElement('canvas')
+        canvas.width  = Math.round(img.width  * scale)
+        canvas.height = Math.round(img.height * scale)
+        canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Compression failed')), 'image/jpeg', 0.85)
+      }
+      img.src = e.target!.result as string
+    }
+    reader.readAsDataURL(source)
+  })
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = reject
+    reader.onload = e => resolve((e.target!.result as string).split(',')[1])
+    reader.readAsDataURL(blob)
+  })
 }
 
 async function toBase64(source: File | string): Promise<string> {

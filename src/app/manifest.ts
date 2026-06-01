@@ -4,10 +4,12 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'PaperTrail',
     short_name: 'PaperTrail',
-    start_url: '/',
+    start_url: '/receipts',
     display: 'standalone',
-    background_color: '#ffffff',
-    theme_color: '#ffffff',
-    icons: []
+    background_color: '#FAF8F4',
+    theme_color: '#FAF8F4',
+    icons: [
+      { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' },
+    ],
   }
 }

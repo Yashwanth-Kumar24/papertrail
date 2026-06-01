@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   title: 'PaperTrail',
   description: 'Scan and search your receipts',
   icons: {
-    icon: '/favicon.ico',
+    icon: '/icon.svg',
   },
 }
 

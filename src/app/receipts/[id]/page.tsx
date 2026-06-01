@@ -61,7 +61,7 @@ export default function ReceiptDetail() {
       {confirm && <DeleteConfirm onConfirm={handleDelete} onCancel={() => setConfirm(false)}/>}
 
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:20}}>
-        <button className="back-link" onClick={() => router.back()}>← Back to receipts</button>
+        <button className="back-link" onClick={() => router.back()}>← Back</button>
         <button
           onClick={() => setConfirm(true)}
           disabled={deleting}
