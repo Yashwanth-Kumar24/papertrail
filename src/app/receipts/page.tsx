@@ -6,6 +6,7 @@ import {
   getStats, deleteReceipt
 } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
+import { PAYER_COLORS } from '@/lib/types'
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
@@ -34,10 +35,11 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
 
 export default function ReceiptsPage() {
   const [receipts,      setReceipts]      = useState<Receipt[]>([])
-  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string }[]>([])
+  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
   const [storeName,     setStoreName]     = useState('')
   const [date,          setDate]          = useState('')
+  const [paidBy,        setPaidBy]        = useState('')
   const [loading,       setLoading]       = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
@@ -49,37 +51,52 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setLoading(true)
-    getReceipts(storeName || undefined, date || undefined)
+    getReceipts(storeName || undefined, date || undefined, paidBy || undefined)
       .then(setReceipts)
       .finally(() => setLoading(false))
-  }, [storeName, date])
+  }, [storeName, date, paidBy])
 
-  // Stores that have receipts on the selected date (or all stores if no date selected)
+  // Each dropdown is filtered by the OTHER two active selections
   const availableStores = useMemo(() => {
-    const source = date ? allMeta.filter(m => m.purchase_date === date) : allMeta
-    return [...new Set(source.map(m => m.store_name))].sort()
-  }, [allMeta, date])
+    let src = allMeta
+    if (date)   src = src.filter(m => m.purchase_date === date)
+    if (paidBy) src = src.filter(m => m.paid_by === paidBy)
+    return [...new Set(src.map(m => m.store_name))].sort()
+  }, [allMeta, date, paidBy])
 
-  // Dates that have receipts for the selected store (or all dates if no store selected)
   const availableDates = useMemo(() => {
-    const source = storeName ? allMeta.filter(m => m.store_name === storeName) : allMeta
-    return [...new Set(source.map(m => m.purchase_date))].sort().reverse()
-  }, [allMeta, storeName])
+    let src = allMeta
+    if (storeName) src = src.filter(m => m.store_name === storeName)
+    if (paidBy)    src = src.filter(m => m.paid_by === paidBy)
+    return [...new Set(src.map(m => m.purchase_date))].sort().reverse()
+  }, [allMeta, storeName, paidBy])
+
+  const availablePayers = useMemo(() => {
+    let src = allMeta
+    if (storeName) src = src.filter(m => m.store_name === storeName)
+    if (date)      src = src.filter(m => m.purchase_date === date)
+    return [...new Set(src.map(m => m.paid_by).filter(Boolean))].sort() as string[]
+  }, [allMeta, storeName, date])
 
   function handleStoreChange(s: string) {
     setStoreName(s)
-    if (date) {
-      const validDates = (s ? allMeta.filter(m => m.store_name === s) : allMeta).map(m => m.purchase_date)
-      if (!validDates.includes(date)) setDate('')
-    }
+    const sub = s ? allMeta.filter(m => m.store_name === s) : allMeta
+    if (date   && !sub.some(m => m.purchase_date === date))   setDate('')
+    if (paidBy && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
   }
 
   function handleDateChange(d: string) {
     setDate(d)
-    if (storeName) {
-      const validStores = (d ? allMeta.filter(m => m.purchase_date === d) : allMeta).map(m => m.store_name)
-      if (!validStores.includes(storeName)) setStoreName('')
-    }
+    const sub = d ? allMeta.filter(m => m.purchase_date === d) : allMeta
+    if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
+    if (paidBy    && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
+  }
+
+  function handlePayerChange(p: string) {
+    setPaidBy(p)
+    const sub = p ? allMeta.filter(m => m.paid_by === p) : allMeta
+    if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
+    if (date      && !sub.some(m => m.purchase_date === date))   setDate('')
   }
 
   async function handleDelete(id: string) {
@@ -121,13 +138,15 @@ export default function ReceiptsPage() {
       <div className="filters">
         <select className="fsel" value={storeName} onChange={e => handleStoreChange(e.target.value)}>
           <option value="">All stores</option>
-          {availableStores.map(s => (
-            <option key={s} value={s}>{s}</option>
-          ))}
+          {availableStores.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <select className="fsel" value={date} onChange={e => handleDateChange(e.target.value)}>
           <option value="">All dates</option>
           {availableDates.map(d => <option key={d} value={d}>{fmt(d)}</option>)}
+        </select>
+        <select className="fsel" value={paidBy} onChange={e => handlePayerChange(e.target.value)}>
+          <option value="">All payers</option>
+          {availablePayers.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
       </div>
 
@@ -152,6 +171,16 @@ export default function ReceiptsPage() {
                       {fmt(r.purchase_date)}
                       {r.purchase_time ? ` · ${r.purchase_time.slice(0,5)}` : ''}
                     </div>
+                    {r.paid_by && (
+                      <span style={{
+                        display:'inline-block',marginTop:4,
+                        fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
+                        background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
+                        color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
+                      }}>
+                        {r.paid_by}
+                      </span>
+                    )}
                   </div>
                   <div style={{textAlign:'right'}}>
                     <div className="rcard-total">{money(r.total)}</div>

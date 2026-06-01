@@ -4,17 +4,22 @@ import { useRouter } from 'next/navigation'
 import { recognizeReceipt } from '@/lib/ocr'
 import { parseReceipt, mergeReceipts } from '@/parsers/registry'
 import type { ParsedReceipt, ParsedItem } from '@/lib/types'
+import { PAYERS, PAYER_COLORS } from '@/lib/types'
 import { saveReceipt, uploadReceiptImage } from '@/lib/queries'
 
 type Step = 'capture' | 'scanning' | 'review' | 'saving'
-
 
 const blankItem = (order: number): ParsedItem => ({
   item_code: '', name: '', original_price: 0,
   discount_amount: 0, final_price: 0, sort_order: order,
 })
 
-// ── Tip popover — defined outside to avoid re-creation ────
+const BLANK_RECEIPT: ParsedReceipt = {
+  store: { brand: 'other', name: '' },
+  line_items: [],
+  raw_ocr_text: '',
+}
+
 function TipPopover() {
   const [open, setOpen] = useState(false)
   return (
@@ -33,7 +38,6 @@ function TipPopover() {
       >
         i
       </button>
-
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{position:'fixed',inset:0,zIndex:10}}/>
@@ -64,18 +68,20 @@ function TipPopover() {
 
 export default function ScanPage() {
   const router = useRouter()
-  const [step,      setStep]      = useState<Step>('capture')
-  const [pct,       setPct]       = useState(0)
-  const [parsed,    setParsed]    = useState<ParsedReceipt | null>(null)
-  const [items,     setItems]     = useState<ParsedItem[]>([])
-  const [error,     setError]     = useState('')
-  const [saveImg,   setSaveImg]   = useState(false)
-  const [imgFiles, setImgFiles] = useState<File[]>([])
-  const [editStore, setEditStore] = useState('')
-  const [location,  setLocation]  = useState('')
-  const [editDate,  setEditDate]  = useState('')
-  const [editTime,  setEditTime]  = useState('')
-  const [editTotal, setEditTotal] = useState('')
+  const [step,        setStep]        = useState<Step>('capture')
+  const [pct,         setPct]         = useState(0)
+  const [parsed,      setParsed]      = useState<ParsedReceipt | null>(null)
+  const [items,       setItems]       = useState<ParsedItem[]>([])
+  const [error,       setError]       = useState('')
+  const [saveImg,     setSaveImg]     = useState(false)
+  const [imgFiles,    setImgFiles]    = useState<File[]>([])
+  const [manualMode,  setManualMode]  = useState(false)
+  const [editStore,   setEditStore]   = useState('')
+  const [location,    setLocation]    = useState('')
+  const [editDate,    setEditDate]    = useState('')
+  const [editTime,    setEditTime]    = useState('')
+  const [editTotal,   setEditTotal]   = useState('')
+  const [editPaidBy,  setEditPaidBy]  = useState('')
   const photoRef  = useRef<HTMLInputElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -87,7 +93,6 @@ export default function ScanPage() {
       setParsed(prev => {
         const merged = prev ? mergeReceipts(prev, result) : result
         setItems(merged.line_items)
-        // On first scan populate all fields; on subsequent scans keep user edits
         if (!prev) {
           setEditStore(merged.store.name ?? '')
           setLocation(merged.store.location ?? '')
@@ -104,12 +109,17 @@ export default function ScanPage() {
     }
   }, [])
 
+  const startManual = () => {
+    setParsed(BLANK_RECEIPT)
+    setItems([blankItem(0)])
+    setEditStore(''); setLocation(''); setEditDate('')
+    setEditTime(''); setEditTotal(''); setEditPaidBy('')
+    setManualMode(true); setStep('review'); setError('')
+  }
+
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
-    if (f) {
-      setImgFiles(prev => [...prev, f])
-      process(f)
-    }
+    if (f) { setImgFiles(prev => [...prev, f]); process(f) }
     e.target.value = ''
   }
 
@@ -125,19 +135,18 @@ export default function ScanPage() {
     }))
   }
 
-  function removeItem(idx: number) {
-    setItems(prev => prev.filter((_, i) => i !== idx))
-  }
-
-  function addItem() {
-    setItems(prev => [...prev, blankItem(prev.length)])
-  }
+  function removeItem(idx: number) { setItems(prev => prev.filter((_, i) => i !== idx)) }
+  function addItem() { setItems(prev => [...prev, blankItem(prev.length)]) }
 
   const save = async () => {
     if (!parsed || step === 'saving') return
     const resolvedDate = editDate || parsed.purchase_date
     if (!resolvedDate) {
       setError('Please enter the receipt date before saving.')
+      return
+    }
+    if (!editPaidBy) {
+      setError('Please select who paid for this receipt.')
       return
     }
     setStep('saving')
@@ -147,6 +156,7 @@ export default function ScanPage() {
         purchase_date: editDate  || parsed.purchase_date,
         purchase_time: editTime  || parsed.purchase_time,
         total:         parseFloat(editTotal) || parsed.total,
+        paid_by:       editPaidBy,
         line_items:    items,
         store: {
           ...parsed.store,
@@ -158,28 +168,19 @@ export default function ScanPage() {
 
       if (saveImg && imgFiles.length > 0) {
         const urls: string[] = []
-
         for (let i = 0; i < imgFiles.length; i++) {
           const url = await uploadReceiptImage(
-            imgFiles[i],
-            id,
-            i,
+            imgFiles[i], id, i,
             final.store.brand,
             final.purchase_date ?? new Date().toISOString().split('T')[0]
           )
-
           if (url) urls.push(url)
         }
-
         if (urls.length) {
           const { supabase } = await import('@/lib/supabase')
-          await supabase
-            .from('receipts')
-            .update({ image_urls: urls })
-            .eq('id', id)
+          await supabase.from('receipts').update({ image_urls: urls }).eq('id', id)
         }
       }
-
       router.push(`/receipts/${id}`)
     } catch (e: any) {
       setError(e.message ?? 'Save failed.')
@@ -191,7 +192,8 @@ export default function ScanPage() {
     setParsed(null); setItems([]); setImgFiles([])
     setSaveImg(false); setStep('capture'); setError('')
     setEditStore(''); setLocation(''); setEditDate('')
-    setEditTime(''); setEditTotal('')
+    setEditTime(''); setEditTotal(''); setEditPaidBy('')
+    setManualMode(false)
   }
 
   return (
@@ -199,72 +201,103 @@ export default function ScanPage() {
       <div className="pg-head"><span className="pg-title">Scan receipt</span></div>
 
       <div className="scan-wrap">
-        {/* Left */}
+        {/* Left panel */}
         <div>
-          <div className="drop-zone">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" strokeLinecap="round" strokeLinejoin="round"/>
-              <circle cx="12" cy="13" r="4" strokeLinecap="round"/>
-            </svg>
-
-            <div style={{display:'flex',alignItems:'center',gap:6,justifyContent:'center'}}>
-              <span style={{fontSize:13,color:'var(--ink2)'}}>Better photo means better results</span>
-              <TipPopover />
+          {manualMode ? (
+            <div style={{background:'var(--cream2)',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'32px 24px',textAlign:'center'}}>
+              <div style={{fontSize:32,marginBottom:10}}>✏️</div>
+              <div style={{fontWeight:600,fontSize:15,marginBottom:6}}>Manual entry</div>
+              <p style={{fontSize:13,color:'var(--ink2)',marginBottom:20,lineHeight:1.5}}>
+                Fill in the receipt details on the right.
+              </p>
+              <button onClick={reset} style={{
+                background:'none',border:'1px solid var(--border2)',
+                borderRadius:'var(--r)',padding:'8px 16px',
+                fontSize:13,color:'var(--ink2)',cursor:'pointer',
+                fontFamily:'var(--sans)',
+              }}>
+                ← Back to scan
+              </button>
             </div>
+          ) : (
+            <>
+              <div className="drop-zone">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" strokeLinecap="round" strokeLinejoin="round"/>
+                  <circle cx="12" cy="13" r="4" strokeLinecap="round"/>
+                </svg>
+                <div style={{display:'flex',alignItems:'center',gap:6,justifyContent:'center'}}>
+                  <span style={{fontSize:13,color:'var(--ink2)'}}>Better photo means better results</span>
+                  <TipPopover />
+                </div>
+                <button className="btn-primary btn-full" onClick={() => photoRef.current?.click()}>
+                  📷 Take photo
+                </button>
+                <button className="btn-secondary btn-full" onClick={() => uploadRef.current?.click()}>
+                  ↑ Upload image
+                </button>
+              </div>
 
-            <button className="btn-primary btn-full" onClick={() => photoRef.current?.click()}>
-              📷 Take photo
-            </button>
-            <button className="btn-secondary btn-full" onClick={() => uploadRef.current?.click()}>
-              ↑ Upload image
-            </button>
-          </div>
-
-          {step === 'scanning' && (
-            <div style={{marginTop:16,padding:'16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
-              {pct < 100 ? (
-                <>
-                  <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Reading receipt… {pct}%</p>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width:`${pct}%`}}/>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Analyzing with AI…</p>
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{width:'100%',animation:'pulse 1.5s ease-in-out infinite'}}/>
-                  </div>
-                  <p style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>Extracting items, prices and discounts</p>
-                </>
+              {step === 'scanning' && (
+                <div style={{marginTop:16,padding:'16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
+                  {pct < 100 ? (
+                    <>
+                      <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Reading receipt… {pct}%</p>
+                      <div className="progress-bar"><div className="progress-fill" style={{width:`${pct}%`}}/></div>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Analyzing with AI…</p>
+                      <div className="progress-bar"><div className="progress-fill" style={{width:'100%',animation:'pulse 1.5s ease-in-out infinite'}}/></div>
+                      <p style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>Extracting items, prices and discounts</p>
+                    </>
+                  )}
+                </div>
               )}
-            </div>
+
+              {step === 'saving' && (
+                <div style={{marginTop:16,padding:'14px 16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
+                  <p style={{fontSize:13,color:'var(--ink2)'}}>Saving…</p>
+                </div>
+              )}
+
+              {error && step !== 'review' && (
+                <div style={{marginTop:12,padding:'10px 14px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:13}}>
+                  {error}
+                </div>
+              )}
+
+              <input ref={photoRef}  type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={onFile}/>
+              <input ref={uploadRef} type="file" accept="image/*" style={{display:'none'}} onChange={onFile}/>
+
+              <div style={{marginTop:12,padding:'14px 16px',background:'var(--cream2)',borderRadius:'var(--r)',fontSize:12,color:'var(--ink2)'}}>
+                <strong style={{color:'var(--ink)'}}>Long receipt?</strong> Scan in sections — items merge automatically.
+              </div>
+
+              <button onClick={startManual} style={{
+                marginTop:10,width:'100%',background:'none',
+                border:'1px dashed var(--border2)',borderRadius:'var(--r)',
+                padding:'11px 16px',fontSize:13,color:'var(--ink2)',
+                cursor:'pointer',fontFamily:'var(--sans)',
+                display:'flex',alignItems:'center',justifyContent:'center',gap:8,
+              }}>
+                <span>🧾</span>
+                <span>Lost a receipt? Add manually</span>
+              </button>
+            </>
           )}
-
-          {step === 'saving' && (
-            <div style={{marginTop:16,padding:'14px 16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
-              <p style={{fontSize:13,color:'var(--ink2)'}}>Saving…</p>
-            </div>
-          )}
-
-          {error && (
-            <div style={{marginTop:12,padding:'10px 14px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:13}}>
-              {error}
-            </div>
-          )}
-
-          <input ref={photoRef}  type="file" accept="image/*" capture="environment" style={{display:'none'}} onChange={onFile}/>
-          <input ref={uploadRef} type="file" accept="image/*" style={{display:'none'}} onChange={onFile}/>
-
-          <div style={{marginTop:12,padding:'14px 16px',background:'var(--cream2)',borderRadius:'var(--r)',fontSize:12,color:'var(--ink2)'}}>
-            <strong style={{color:'var(--ink)'}}>Long receipt?</strong> Scan in sections — items merge automatically.
-          </div>
         </div>
 
-        {/* Right — review */}
+        {/* Right — review panel */}
         {parsed && step === 'review' && (
           <div className="review-panel">
-            <h3>Review before saving</h3>
+            <h3>{manualMode ? 'Add receipt manually' : 'Review before saving'}</h3>
+
+            {error && (
+              <div style={{padding:'8px 12px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:12,marginBottom:12}}>
+                {error}
+              </div>
+            )}
 
             <div className="rp-row">
               <span className="rp-label">Store</span>
@@ -309,6 +342,29 @@ export default function ScanPage() {
                 onBlur={e  => e.target.style.borderColor='transparent'}
               />
             </div>
+
+            {/* Paid by — required */}
+            <div className="rp-row">
+              <span className="rp-label">
+                Paid by <span style={{color:'var(--red)',fontSize:10,verticalAlign:'middle'}}>required</span>
+              </span>
+              <select
+                value={editPaidBy}
+                onChange={e => { setEditPaidBy(e.target.value); if (error.includes('paid')) setError('') }}
+                style={{
+                  fontSize:13,padding:'3px 8px',
+                  border:`1px solid ${editPaidBy ? 'var(--border)' : 'var(--red)'}`,
+                  borderRadius:4,background:'#fff',
+                  color: editPaidBy ? 'var(--ink)' : 'var(--ink3)',
+                  fontFamily:'var(--sans)',cursor:'pointer',
+                  ...(editPaidBy ? {background: PAYER_COLORS[editPaidBy]?.bg, color: PAYER_COLORS[editPaidBy]?.color, fontWeight:600} : {}),
+                }}
+              >
+                <option value="">— select payer —</option>
+                {PAYERS.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
             {parsed.transaction_id && (
               <div className="rp-row">
                 <span className="rp-label">Txn ID</span>
@@ -363,18 +419,22 @@ export default function ScanPage() {
             </div>
 
             <div className="save-bar">
-              <button className="btn-secondary" style={{fontSize:12,padding:'7px 14px'}} onClick={() => uploadRef.current?.click()}>
-                + Add section
-              </button>
+              {!manualMode && (
+                <button className="btn-secondary" style={{fontSize:12,padding:'7px 14px'}} onClick={() => uploadRef.current?.click()}>
+                  + Add section
+                </button>
+              )}
               <button className="btn-primary" onClick={save}>
                 Save receipt
               </button>
-              <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--ink2)',marginLeft:'auto'}}>
-                <input type="checkbox" checked={saveImg} onChange={e => setSaveImg(e.target.checked)}
-                  style={{accentColor:'var(--green)',width:14,height:14}}
-                />
-                Save image
-              </label>
+              {!manualMode && (
+                <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--ink2)',marginLeft:'auto'}}>
+                  <input type="checkbox" checked={saveImg} onChange={e => setSaveImg(e.target.checked)}
+                    style={{accentColor:'var(--green)',width:14,height:14}}
+                  />
+                  Save image
+                </label>
+              )}
             </div>
 
             <button onClick={reset} style={{
@@ -385,7 +445,7 @@ export default function ScanPage() {
               cursor:'pointer',padding:'8px 16px',
               width:'100%',fontFamily:'var(--sans)',
             }}>
-              ✕ Discard and scan again
+              ✕ {manualMode ? 'Discard' : 'Discard and scan again'}
             </button>
           </div>
         )}

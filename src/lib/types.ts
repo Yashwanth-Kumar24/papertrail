@@ -7,6 +7,7 @@ export interface Receipt {
   purchase_time?: string
   transaction_id?: string
   total: number
+  paid_by?: string
   image_urls?: string[]
   raw_ocr_text?: string
   created_at: string
@@ -45,8 +46,17 @@ export interface ParsedReceipt {
   purchase_time?: string
   transaction_id?: string
   total?: number
+  paid_by?: string
   line_items: ParsedItem[]
   raw_ocr_text: string
+}
+
+export const PAYERS = ['Yash', 'Alekhya', 'Pavan'] as const
+
+export const PAYER_COLORS: Record<string, { bg: string; color: string }> = {
+  'Yash':    { bg: '#E8F5EF', color: '#1D6F50' },
+  'Alekhya': { bg: '#EDE9FE', color: '#5B21B6' },
+  'Pavan':   { bg: '#FEF3C7', color: '#92400E' },
 }
 
 export interface ItemHistory {

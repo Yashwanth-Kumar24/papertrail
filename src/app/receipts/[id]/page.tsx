@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { getReceiptById, deleteReceipt } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
+import { PAYER_COLORS } from '@/lib/types'
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
@@ -93,6 +94,18 @@ export default function ReceiptDetail() {
               <span className="meta-label">Savings</span>
               <span style={{color:'var(--green)',fontFamily:'var(--mono)'}}>
                 {money(discounted.reduce((s,i) => s + i.discount_amount, 0))}
+              </span>
+            </div>
+          )}
+          {receipt.paid_by && (
+            <div className="meta-row">
+              <span className="meta-label">Paid by</span>
+              <span style={{
+                fontSize:12,fontWeight:600,padding:'2px 10px',borderRadius:999,
+                background: PAYER_COLORS[receipt.paid_by]?.bg ?? 'var(--cream2)',
+                color:      PAYER_COLORS[receipt.paid_by]?.color ?? 'var(--ink2)',
+              }}>
+                {receipt.paid_by}
               </span>
             </div>
           )}

@@ -42,6 +42,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       purchase_time:  parsed.purchase_time  ?? null,
       transaction_id: parsed.transaction_id ?? null,
       total:          parsed.total          ?? 0,
+      paid_by:        parsed.paid_by        ?? null,
       raw_ocr_text:   parsed.raw_ocr_text,
     })
     .select('id')
@@ -91,7 +92,8 @@ export async function uploadReceiptImage(
 // ── Get receipts list ──────────────────────────────────────
 export async function getReceipts(
   storeName?: string,
-  date?: string
+  date?: string,
+  paidBy?: string,
 ): Promise<Receipt[]> {
   let q = supabase
     .from('receipts')
@@ -101,6 +103,7 @@ export async function getReceipts(
 
   if (storeName) q = q.eq('store_name', storeName)
   if (date)      q = q.eq('purchase_date', date)
+  if (paidBy)    q = q.eq('paid_by', paidBy)
 
   const { data, error } = await q
   if (error) throw new Error(error.message)
@@ -122,12 +125,12 @@ export async function getReceiptById(id: string): Promise<Receipt | null> {
   return data as Receipt
 }
 
-// ── Get store_name+date pairs for coordinated filter dropdowns ──
-export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string }[]> {
+// ── Get store_name+date+paid_by for coordinated filter dropdowns ──
+export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string; paid_by: string | null }[]> {
   const { data } = await supabase
     .from('receipts')
-    .select('store_name, purchase_date')
-  return (data ?? []) as { store_name: string; purchase_date: string }[]
+    .select('store_name, purchase_date, paid_by')
+  return (data ?? []) as { store_name: string; purchase_date: string; paid_by: string | null }[]
 }
 
 // ── Stats ──────────────────────────────────────────────────
@@ -259,7 +262,7 @@ function groupHistory(rows: any[]): ItemHistory[] {
 export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
   let q = supabase
     .from('receipts')
-    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total')
+    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total, paid_by')
     .order('purchase_date', { ascending: false })
 
   if (dateFrom) q = q.gte('purchase_date', dateFrom)

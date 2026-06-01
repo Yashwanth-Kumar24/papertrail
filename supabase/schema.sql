@@ -12,6 +12,7 @@ create table receipts (
   purchase_time   time,
   transaction_id  text,
   total           numeric(10,2) not null default 0,
+  paid_by         text,
   image_urls      text[],
   raw_ocr_text    text,
   created_at      timestamptz default now()
