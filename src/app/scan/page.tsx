@@ -90,7 +90,7 @@ export default function ScanPage() {
   const [items,     setItems]     = useState<ParsedItem[]>([])
   const [error,     setError]     = useState('')
   const [saveImg,   setSaveImg]   = useState(false)
-  const [imgFile,   setImgFile]   = useState<File | null>(null)
+  const [imgFiles, setImgFiles] = useState<File[]>([])
   const [editStore, setEditStore] = useState('')
   const [location,  setLocation]  = useState('')
   const [editDate,  setEditDate]  = useState('')
@@ -123,7 +123,10 @@ export default function ScanPage() {
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
-    if (f) { setImgFile(f); process(f) }
+    if (f) {
+      setImgFiles(prev => [...prev, f])
+      process(f)
+    }
     e.target.value = ''
   }
 
@@ -165,15 +168,27 @@ export default function ScanPage() {
       }
       const id = await saveReceipt(final)
 
-      if (saveImg && imgFile) {
-        const url = await uploadReceiptImage(
-          imgFile, id, 0,
-          final.store.brand,
-          final.purchase_date ?? new Date().toISOString().split('T')[0]
-        )
-        if (url) {
+      if (saveImg && imgFiles.length > 0) {
+        const urls: string[] = []
+
+        for (let i = 0; i < imgFiles.length; i++) {
+          const url = await uploadReceiptImage(
+            imgFiles[i],
+            id,
+            i,
+            final.store.brand,
+            final.purchase_date ?? new Date().toISOString().split('T')[0]
+          )
+
+          if (url) urls.push(url)
+        }
+
+        if (urls.length) {
           const { supabase } = await import('@/lib/supabase')
-          await supabase.from('receipts').update({ image_urls: [url] }).eq('id', id)
+          await supabase
+            .from('receipts')
+            .update({ image_urls: urls })
+            .eq('id', id)
         }
       }
 
@@ -185,7 +200,7 @@ export default function ScanPage() {
   }
 
   const reset = () => {
-    setParsed(null); setItems([]); setImgFile(null)
+    setParsed(null); setItems([]); setImgFiles([])
     setSaveImg(false); setStep('capture'); setError('')
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal('')

@@ -1,9 +1,8 @@
 'use client'
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { searchItems } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { useEffect } from 'react'
 import type { ItemHistory } from '@/lib/types'
 
 const fmt = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
@@ -73,7 +72,7 @@ function ItemRow({ item }: { item: ItemHistory }) {
   )
 }
 
-export default function ItemsPage() {
+function ItemsPageContent() {
   const [query,    setQuery]    = useState('')
   const [results,  setResults]  = useState<ItemHistory[]>([])
   const [loading,  setLoading]  = useState(false)
@@ -169,5 +168,13 @@ export default function ItemsPage() {
         </div>
       )}
     </main>
+  )
+}
+
+export default function ItemsPage() {
+  return (
+    <Suspense fallback={<main className="page">Loading items…</main>}>
+      <ItemsPageContent />
+    </Suspense>
   )
 }
