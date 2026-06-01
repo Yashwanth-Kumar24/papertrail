@@ -229,8 +229,23 @@ input:focus, select:focus { border-color: var(--green); }
   margin: 0 auto;
 }
 
-.drop-zone svg { width: 40px; height: 40px; stroke: var(--ink3); fill: none; stroke-width: 1.5; }
-.drop-zone p { font-size: 13px; color: var(--ink2); max-width: 260px; }
+.drop-zone {
+  background: #fff;
+  border: 2px dashed var(--border2);
+  border-radius: var(--rl);
+  padding: 48px 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  width: 100%;
+  min-height: 280px;
+}
+.drop-zone svg { width: 40px; height: 40px; stroke: var(--ink3); fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.drop-zone p { font-size: 13px; color: var(--ink2); margin: 0; }
+
 .btn-primary {
   background: var(--green); color: #fff; border: none;
   border-radius: var(--r); padding: 10px 22px;

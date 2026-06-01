@@ -15,40 +15,105 @@ const blankItem = (order: number): ParsedItem => ({
   discount_amount: 0, final_price: 0, sort_order: order,
 })
 
+// ── Tip popover — defined outside to avoid re-creation ────
+function TipPopover() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{position:'relative',display:'inline-flex'}}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width:18,height:18,borderRadius:'50%',
+          border:'1.5px solid var(--border2)',
+          background:'var(--cream2)',color:'var(--ink2)',
+          fontSize:10,fontWeight:600,cursor:'pointer',
+          display:'flex',alignItems:'center',justifyContent:'center',
+          flexShrink:0,padding:0,fontFamily:'var(--sans)',lineHeight:1,
+        }}
+        aria-label="Photo tips"
+      >
+        i
+      </button>
+
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{position:'fixed',inset:0,zIndex:10}}/>
+          <div style={{
+            position:'absolute',
+            top:'calc(100% + 8px)',
+            left:'50%',
+            transform:'translateX(-50%)',
+            zIndex:20,
+            background:'#fff',
+            border:'1px solid var(--border)',
+            borderRadius:'var(--rl)',
+            padding:'12px 14px',
+            width:220,
+            boxShadow:'0 4px 16px rgba(0,0,0,0.10)',
+          }}>
+            <div style={{
+              position:'absolute',top:-5,left:'50%',
+              transform:'translateX(-50%) rotate(45deg)',
+              width:9,height:9,
+              background:'#fff',
+              border:'1px solid var(--border)',
+              borderBottom:'none',borderRight:'none',
+            }}/>
+            <div style={{fontSize:12,fontWeight:600,color:'var(--ink)',marginBottom:8}}>
+              📸 Tips for best results
+            </div>
+            <div style={{display:'flex',flexDirection:'column',gap:6}}>
+              {[
+                ['💡','Good lighting — avoid shadows'],
+                ['📐','Flat on a table — no folds'],
+                ['🎯','Phone directly above — straight down'],
+                ['📄','Full receipt in frame — edges visible'],
+              ].map(([icon, tip]) => (
+                <div key={tip} style={{display:'flex',gap:8,alignItems:'flex-start',fontSize:12,color:'var(--ink2)'}}>
+                  <span style={{flexShrink:0}}>{icon}</span>
+                  <span>{tip}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function ScanPage() {
   const router = useRouter()
-  const [step,   setStep]   = useState<Step>('capture')
-  const [pct,    setPct]    = useState(0)
-  const [parsed, setParsed] = useState<ParsedReceipt | null>(null)
-  const [items,  setItems]  = useState<ParsedItem[]>([])
-  const [error,  setError]  = useState('')
+  const [step,      setStep]      = useState<Step>('capture')
+  const [pct,       setPct]       = useState(0)
+  const [parsed,    setParsed]    = useState<ParsedReceipt | null>(null)
+  const [items,     setItems]     = useState<ParsedItem[]>([])
+  const [error,     setError]     = useState('')
+  const [saveImg,   setSaveImg]   = useState(false)
+  const [imgFile,   setImgFile]   = useState<File | null>(null)
+  const [editStore, setEditStore] = useState('')
+  const [location,  setLocation]  = useState('')
+  const [editDate,  setEditDate]  = useState('')
+  const [editTime,  setEditTime]  = useState('')
+  const [editTotal, setEditTotal] = useState('')
   const photoRef  = useRef<HTMLInputElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
-  const [saveImg,  setSaveImg]  = useState(false)
-  const [imgFile,  setImgFile]  = useState<File | null>(null)
-  const [editStore, setEditStore] = useState('')
-  const [location, setLocation] = useState('')
-  const [editDate, setEditDate] = useState('')
-  const [editTime, setEditTime] = useState('')
-  const [editTotal, setEditTotal] = useState('')
 
   const process = useCallback(async (file: File) => {
     setError(''); setStep('scanning'); setPct(0)
     try {
       const text   = await recognizeReceipt(file, p => setPct(p))
-      console.log('RAW:', text.split('\n').map((l,i) => `${i}: "${l}"`).join('\n'))
       const result = await parseReceipt(text)
-      console.log('ITEMS:', result.line_items)
       setParsed(prev => {
-      const merged = prev ? mergeReceipts(prev, result) : result
-      setItems(merged.line_items)
-      setEditStore(merged.store.name ?? '')
-      setLocation(merged.store.location ?? '')
-      setEditDate(merged.purchase_date ?? '')
-      setEditTime(merged.purchase_time ?? '')
-      setEditTotal(merged.total != null ? String(merged.total) : '')
-      return merged
-})
+        const merged = prev ? mergeReceipts(prev, result) : result
+        setItems(merged.line_items)
+        setEditStore(merged.store.name ?? '')
+        setLocation(merged.store.location ?? '')
+        setEditDate(merged.purchase_date ?? '')
+        setEditTime(merged.purchase_time ?? '')
+        setEditTotal(merged.total != null ? String(merged.total) : '')
+        return merged
+      })
       setStep('review')
     } catch {
       setError('OCR failed — try a clearer or flatter photo.')
@@ -62,13 +127,10 @@ export default function ScanPage() {
     e.target.value = ''
   }
 
-  // ── item editing ─────────────────────────────────────────
   function updateItem(idx: number, field: keyof ParsedItem, value: string) {
     setItems(prev => prev.map((item, i) => {
       if (i !== idx) return item
-      if (field === 'name' || field === 'item_code') {
-        return { ...item, [field]: value }
-      }
+      if (field === 'name' || field === 'item_code') return { ...item, [field]: value }
       if (field === 'final_price' || field === 'original_price') {
         const num = parseFloat(value) || 0
         return { ...item, original_price: num, final_price: num, discount_amount: 0 }
@@ -85,23 +147,22 @@ export default function ScanPage() {
     setItems(prev => [...prev, blankItem(prev.length)])
   }
 
-  // ── save ─────────────────────────────────────────────────
   const save = async () => {
     if (!parsed) return
     setStep('saving')
     try {
       const final: ParsedReceipt = {
-      ...parsed,
-      purchase_date:  editDate  || parsed.purchase_date,
-      purchase_time:  editTime  || parsed.purchase_time,
-      total:          parseFloat(editTotal) || parsed.total,
-      line_items:     items,
-      store: {
-        ...parsed.store,
-        name:     editStore || parsed.store.name,
-        location: location  || undefined,
+        ...parsed,
+        purchase_date: editDate  || parsed.purchase_date,
+        purchase_time: editTime  || parsed.purchase_time,
+        total:         parseFloat(editTotal) || parsed.total,
+        line_items:    items,
+        store: {
+          ...parsed.store,
+          name:     editStore || parsed.store.name,
+          location: location  || undefined,
+        }
       }
-    }
       const id = await saveReceipt(final)
 
       if (saveImg && imgFile) {
@@ -142,7 +203,12 @@ export default function ScanPage() {
               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" strokeLinecap="round" strokeLinejoin="round"/>
               <circle cx="12" cy="13" r="4" strokeLinecap="round"/>
             </svg>
-            <p>Flat on a table, good lighting, phone directly above — better photo means better results</p>
+
+            <div style={{display:'flex',alignItems:'center',gap:6,justifyContent:'center'}}>
+              <span style={{fontSize:13,color:'var(--ink2)'}}>Better photo means better results</span>
+              <TipPopover />
+            </div>
+
             <button className="btn-primary btn-full" onClick={() => photoRef.current?.click()}>
               📷 Take photo
             </button>
@@ -152,31 +218,25 @@ export default function ScanPage() {
           </div>
 
           {step === 'scanning' && (
-          <div style={{marginTop:16,padding:'16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
-            {pct < 100 ? (
-              <>
-                <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>
-                  Reading receipt… {pct}%
-                </p>
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{width:`${pct}%`}}/>
-                </div>
-              </>
-            ) : (
-              <>
-                <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>
-                  Analyzing with AI…
-                </p>
-                <div className="progress-bar">
-                  <div className="progress-fill" style={{width:'100%',background:'var(--amber)',animation:'pulse 1.5s ease-in-out infinite'}}/>
-                </div>
-                <p style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>
-                  Extracting items, prices and discounts
-                </p>
-              </>
-            )}
-          </div>
-        )}
+            <div style={{marginTop:16,padding:'16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
+              {pct < 100 ? (
+                <>
+                  <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Reading receipt… {pct}%</p>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{width:`${pct}%`}}/>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p style={{fontSize:13,color:'var(--ink2)',marginBottom:6}}>Analyzing with AI…</p>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{width:'100%',animation:'pulse 1.5s ease-in-out infinite'}}/>
+                  </div>
+                  <p style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>Extracting items, prices and discounts</p>
+                </>
+              )}
+            </div>
+          )}
 
           {step === 'saving' && (
             <div style={{marginTop:16,padding:'14px 16px',background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--r)'}}>
@@ -204,62 +264,63 @@ export default function ScanPage() {
             <h3>Review before saving</h3>
 
             <div className="rp-row">
-            <span className="rp-label">Store</span>
-            <input suppressHydrationWarning value={editStore} onChange={e => setEditStore(e.target.value)}
-              placeholder="Store name"
-              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
-              onFocus={e => e.target.style.borderColor='var(--green)'}
-              onBlur={e  => e.target.style.borderColor='transparent'}
-            />
-          </div>
-          <div className="rp-row">
-            <span className="rp-label">Location</span>
-            <input suppressHydrationWarning value={location} onChange={e => setLocation(e.target.value)}
-              placeholder="e.g. Redmond, WA"
-              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
-              onFocus={e => e.target.style.borderColor='var(--green)'}
-              onBlur={e  => e.target.style.borderColor='transparent'}
-            />
-          </div>
-          <div className="rp-row">
-            <span className="rp-label">Date</span>
-            <input suppressHydrationWarning type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
-              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
-              onFocus={e => e.target.style.borderColor='var(--green)'}
-              onBlur={e  => e.target.style.borderColor='transparent'}
-            />
-          </div>
-          <div className="rp-row">
-            <span className="rp-label">Time</span>
-            <input suppressHydrationWarning type="time" value={editTime} onChange={e => setEditTime(e.target.value)}
-              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
-              onFocus={e => e.target.style.borderColor='var(--green)'}
-              onBlur={e  => e.target.style.borderColor='transparent'}
-            />
-          </div>
-          <div className="rp-row">
-            <span className="rp-label">Total</span>
-            <input suppressHydrationWarning type="number" step="0.01" value={editTotal} onChange={e => setEditTotal(e.target.value)}
-              placeholder="0.00"
-              style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:100,fontFamily:'var(--mono)'}}
-              onFocus={e => e.target.style.borderColor='var(--green)'}
-              onBlur={e  => e.target.style.borderColor='transparent'}
-            />
-          </div>
-            {parsed.transaction_id && <div className="rp-row"><span className="rp-label">Txn ID</span><span className="rp-val" style={{fontSize:12}}>{parsed.transaction_id}</span></div>}
-            
+              <span className="rp-label">Store</span>
+              <input suppressHydrationWarning value={editStore} onChange={e => setEditStore(e.target.value)}
+                placeholder="Store name"
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
+            <div className="rp-row">
+              <span className="rp-label">Location</span>
+              <input suppressHydrationWarning value={location} onChange={e => setLocation(e.target.value)}
+                placeholder="e.g. Redmond, WA"
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:200,fontFamily:'var(--sans)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
+            <div className="rp-row">
+              <span className="rp-label">Date</span>
+              <input suppressHydrationWarning type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
+            <div className="rp-row">
+              <span className="rp-label">Time</span>
+              <input suppressHydrationWarning type="time" value={editTime} onChange={e => setEditTime(e.target.value)}
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,fontFamily:'var(--sans)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
+            <div className="rp-row">
+              <span className="rp-label">Total</span>
+              <input suppressHydrationWarning type="number" step="0.01" value={editTotal} onChange={e => setEditTotal(e.target.value)}
+                placeholder="0.00"
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:100,fontFamily:'var(--mono)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
+            {parsed.transaction_id && (
+              <div className="rp-row">
+                <span className="rp-label">Txn ID</span>
+                <span className="rp-val" style={{fontSize:12}}>{parsed.transaction_id}</span>
+              </div>
+            )}
 
-            {/* Items */}
             <div className="rp-items">
               <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8,paddingBottom:6,borderBottom:'1px solid var(--border)'}}>
-                {items.filter(i => i.discount_amount >= 0 && i.final_price > 0).length} ITEMS — CLICK ANY FIELD TO EDIT
+                {items.filter(i => i.final_price > 0).length} items — click any field to edit
               </div>
 
               {items.map((item, i) => (
                 <div key={i} style={{display:'grid',gridTemplateColumns:'72px 1fr 72px 24px',gap:4,padding:'6px 0',borderBottom:'1px solid var(--border)',alignItems:'center'}}>
-                  {/* Code */}
-                  <input
-                    suppressHydrationWarning
+                  <input suppressHydrationWarning
                     value={item.item_code ?? ''}
                     onChange={e => updateItem(i, 'item_code', e.target.value)}
                     placeholder="code"
@@ -267,9 +328,7 @@ export default function ScanPage() {
                     onFocus={e => e.target.style.borderColor='var(--green)'}
                     onBlur={e  => e.target.style.borderColor='transparent'}
                   />
-                  {/* Name */}
-                  <input
-                    suppressHydrationWarning
+                  <input suppressHydrationWarning
                     value={item.name}
                     onChange={e => updateItem(i, 'name', e.target.value)}
                     placeholder="item name"
@@ -277,11 +336,8 @@ export default function ScanPage() {
                     onFocus={e => e.target.style.borderColor='var(--green)'}
                     onBlur={e  => e.target.style.borderColor='transparent'}
                   />
-                  {/* Price */}
-                  <input
-                    suppressHydrationWarning
-                    type="number"
-                    step="0.01"
+                  <input suppressHydrationWarning
+                    type="number" step="0.01"
                     value={item.final_price || ''}
                     onChange={e => updateItem(i, 'final_price', e.target.value)}
                     placeholder="0.00"
@@ -289,20 +345,14 @@ export default function ScanPage() {
                     onFocus={e => e.target.style.borderColor='var(--green)'}
                     onBlur={e  => e.target.style.borderColor='transparent'}
                   />
-                  {/* Delete */}
-                  <button
-                    onClick={() => removeItem(i)}
+                  <button onClick={() => removeItem(i)}
                     style={{background:'none',border:'none',color:'var(--ink3)',cursor:'pointer',fontSize:16,lineHeight:1,padding:'0 2px'}}
                     aria-label="Remove item"
-                  >
-                    ×
-                  </button>
+                  >×</button>
                 </div>
               ))}
 
-              {/* Add item */}
-              <button
-                onClick={addItem}
+              <button onClick={addItem}
                 style={{marginTop:8,background:'none',border:'1px dashed var(--border2)',borderRadius:'var(--r)',width:'100%',padding:'7px',fontSize:12,color:'var(--ink2)',cursor:'pointer'}}
               >
                 + Add item manually
@@ -317,27 +367,21 @@ export default function ScanPage() {
                 Save receipt
               </button>
               <label style={{display:'flex',alignItems:'center',gap:6,fontSize:12,color:'var(--ink2)',marginLeft:'auto'}}>
-                <input
-                  type="checkbox"
-                  checked={saveImg}
-                  onChange={e => setSaveImg(e.target.checked)}
+                <input type="checkbox" checked={saveImg} onChange={e => setSaveImg(e.target.checked)}
                   style={{accentColor:'var(--green)',width:14,height:14}}
                 />
                 Save image
               </label>
             </div>
 
-            <button
-              onClick={reset}
-              style={{
-                marginTop:12, background:'none',
-                border:'1px solid var(--border)',
-                borderRadius:'var(--r)',
-                fontSize:13, color:'var(--ink2)',
-                cursor:'pointer', padding:'8px 16px',
-                width:'100%', fontFamily:'var(--sans)',
-              }}
-            >
+            <button onClick={reset} style={{
+              marginTop:12,background:'none',
+              border:'1px solid var(--border)',
+              borderRadius:'var(--r)',
+              fontSize:13,color:'var(--ink2)',
+              cursor:'pointer',padding:'8px 16px',
+              width:'100%',fontFamily:'var(--sans)',
+            }}>
               ✕ Discard and scan again
             </button>
           </div>

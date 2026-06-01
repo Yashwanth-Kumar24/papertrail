@@ -25,7 +25,7 @@ export async function recognizeReceipt(
     return data.text
   }
 
-  // Tesseract fallback
+  // Only reaches here if NEXT_PUBLIC_USE_GOOGLE_OCR is false
   onProgress?.(0, 'loading')
   const Tesseract = (await import('tesseract.js')).default
   const input = source instanceof File ? await preprocessImage(source) : source

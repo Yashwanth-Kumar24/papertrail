@@ -11,6 +11,9 @@ const dmMono  = DM_Mono({ subsets: ['latin'], weight: ['400', '500'], variable: 
 export const metadata: Metadata = {
   title: 'PaperTrail',
   description: 'Scan and search your receipts',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export const viewport: Viewport = {
