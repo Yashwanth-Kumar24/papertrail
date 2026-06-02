@@ -21,7 +21,11 @@ export async function POST(req: NextRequest) {
       subs.map(sub =>
         webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { auth: sub.auth, p256dh: sub.p256dh } },
-          payload
+          payload,
+          {
+            urgency: 'high', // triggers banner/heads-up on Android
+            TTL:     3600,   // retry for 1 hour if device is offline
+          }
         )
       )
     )
