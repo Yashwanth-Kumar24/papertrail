@@ -51,6 +51,15 @@ export interface ParsedReceipt {
   raw_ocr_text: string
 }
 
+export interface ShoppingItem {
+  id: string
+  text: string
+  added_by?: string
+  done: boolean
+  done_at?: string
+  created_at: string
+}
+
 export const PAYERS = ['Yash', 'Alekhya', 'Pavan'] as const
 
 export const PAYER_COLORS: Record<string, { bg: string; color: string }> = {

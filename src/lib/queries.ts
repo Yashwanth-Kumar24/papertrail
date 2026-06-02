@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Receipt, ParsedReceipt, ItemHistory } from './types'
+import type { Receipt, ParsedReceipt, ItemHistory, ShoppingItem } from './types'
 
 // ── Save receipt ───────────────────────────────────────────
 export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
@@ -327,4 +327,45 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
     byMonth,
     receipts,
   }
+}
+
+// ── Shopping list ──────────────────────────────────────────
+// Change this to adjust how long checked-off items stay visible
+const DONE_VISIBLE_HOURS = 2
+
+export async function getShoppingList(): Promise<ShoppingItem[]> {
+  const { data, error } = await supabase
+    .from('shopping_list')
+    .select('*')
+    .order('done',       { ascending: true  })   // active items first
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+
+  const cutoff = new Date(Date.now() - DONE_VISIBLE_HOURS * 60 * 60 * 1000).toISOString()
+  return ((data ?? []) as ShoppingItem[]).filter(
+    i => !i.done || (i.done_at != null && i.done_at >= cutoff)
+  )
+}
+
+export async function addShoppingItem(text: string, added_by: string): Promise<ShoppingItem> {
+  const { data, error } = await supabase
+    .from('shopping_list')
+    .insert({ text, added_by })
+    .select()
+    .single()
+  if (error) throw new Error(error.message)
+  return data as ShoppingItem
+}
+
+export async function markShoppingItemDone(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('shopping_list')
+    .update({ done: true, done_at: new Date().toISOString() })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteShoppingItem(id: string): Promise<void> {
+  const { error } = await supabase.from('shopping_list').delete().eq('id', id)
+  if (error) throw new Error(error.message)
 }

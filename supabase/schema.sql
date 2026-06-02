@@ -52,6 +52,17 @@ create view item_purchase_history as
 alter table receipts      disable row level security;
 alter table receipt_items disable row level security;
 
+create table shopping_list (
+  id          uuid primary key default gen_random_uuid(),
+  text        text not null,
+  added_by    text,
+  done        boolean not null default false,
+  done_at     timestamptz,
+  created_at  timestamptz default now()
+);
+
+alter table shopping_list disable row level security;
+
 create unique index receipts_unique_txn
 on receipts (store_name, purchase_date, transaction_id, total)
 where transaction_id is not null;

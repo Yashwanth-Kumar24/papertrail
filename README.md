@@ -13,6 +13,7 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 - **Spending** — date range analytics — total spent, by store, by month, avg per trip, total saved
 - **Items** — search any item by name, code, or price across all receipts
 - **Price history** — see every purchase of an item with trend — flags when price went up (useful for Costco returns)
+- **Needs** — shared household shopping list; add items, check off when bought, done items auto-clear after 2 hours
 - **Delete** — remove receipts from list or detail view with confirmation
 
 ## Tech stack
@@ -108,12 +109,13 @@ src/
     receipts/            Receipt list + detail page
     spending/            Spending analytics with date range
     items/               Item search with price history
+    needs/               Shared household shopping list (Needs tab)
     scan/                Scan flow — capture, OCR, review, save, manual entry
   components/
     NavLinks.tsx         Desktop top nav
     MobNav.tsx           Mobile bottom nav
   lib/
-    types.ts             TypeScript interfaces + PAYERS/PAYER_COLORS constants
+    types.ts             TypeScript interfaces + PAYERS/PAYER_COLORS/ShoppingItem
     supabase.ts          Supabase client
     queries.ts           All DB operations
     ocr.ts               OCR wrapper — Google Vision (with compression) or Tesseract fallback
@@ -136,6 +138,9 @@ receipt_items:
   id, receipt_id, item_code, name,
   original_price, discount_amount, final_price,
   sort_order, created_at
+
+shopping_list:
+  id, text, added_by, done, done_at, created_at
 ```
 
 `paid_by` stores the household member who paid (e.g. `Yash`, `Alekhya`, `Pavan`).
@@ -180,6 +185,21 @@ For long receipts (e.g. full Costco run):
 2. Click **+ Add section** — scan the bottom half
 3. Items merge automatically, deduplicating by item code or name
 4. Metadata (transaction ID, date, total) fills in from whichever section had it
+
+## Needs — shared shopping list
+
+The Needs tab is a shared household list synced via Supabase:
+- Add items with your name (Yash / Alekhya / Pavan)
+- Tap the circle to mark done — item moves to a "Done" section
+- Done items auto-clear after **2 hours** (configurable via `DONE_VISIBLE_HOURS` in `src/lib/queries.ts`)
+- Tap a done item's green check to undo
+- List re-syncs whenever the browser tab regains focus
+
+To change the auto-clear window, edit one constant:
+```ts
+// src/lib/queries.ts
+const DONE_VISIBLE_HOURS = 2  // change to any number of hours
+```
 
 ## Manual receipt entry
 
