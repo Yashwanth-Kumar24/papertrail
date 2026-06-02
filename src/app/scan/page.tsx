@@ -181,6 +181,17 @@ export default function ScanPage() {
           await supabase.from('receipts').update({ image_urls: urls }).eq('id', id)
         }
       }
+      // Fire push notification — don't await, never block navigation
+      fetch('/api/notify', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'New receipt added',
+          body:  `${editPaidBy} added ${final.store.name} · $${Number(final.total ?? 0).toFixed(2)}`,
+          url:   `/receipts/${id}`,
+        }),
+      }).catch(() => {})
+
       router.push(`/receipts/${id}`)
     } catch (e: any) {
       setError(e.message ?? 'Save failed.')
@@ -342,6 +353,16 @@ export default function ScanPage() {
                 onBlur={e  => e.target.style.borderColor='transparent'}
               />
             </div>
+
+            {/* Tax — read-only, shown only when AI extracted it */}
+            {parsed.tax != null && parsed.tax > 0 && (
+              <div className="rp-row">
+                <span className="rp-label">Tax</span>
+                <span className="rp-val" style={{fontSize:13,fontFamily:'var(--mono)'}}>
+                  ${Number(parsed.tax).toFixed(2)}
+                </span>
+              </div>
+            )}
 
             {/* Paid by — required */}
             <div className="rp-row">

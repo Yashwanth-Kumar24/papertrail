@@ -97,6 +97,12 @@ export default function ReceiptDetail() {
               </span>
             </div>
           )}
+          {receipt.tax != null && receipt.tax > 0 && (
+            <div className="meta-row">
+              <span className="meta-label">Tax</span>
+              <span className="meta-val">{money(receipt.tax)}</span>
+            </div>
+          )}
           {receipt.paid_by && (
             <div className="meta-row">
               <span className="meta-label">Paid by</span>

@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from 'next'
 import { Manrope, DM_Mono } from 'next/font/google'
 import './globals.css'
-import NavLinks from '@/components/NavLinks'
-import MobNav   from '@/components/MobNav'
+import NavLinks      from '@/components/NavLinks'
+import MobNav        from '@/components/MobNav'
+import SwRegister    from '@/components/SwRegister'
+import NotifyBanner  from '@/components/NotifyBanner'
 import Link from 'next/link'
 
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-sans', display: 'swap' })
@@ -31,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${manrope.variable} ${dmMono.variable}`}>
       <body suppressHydrationWarning>
+        <SwRegister />
         <header className="topnav">
           <Link href="/receipts" style={{textDecoration:'none'}}>
             <div className="brand">
@@ -43,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </Link>
           <NavLinks />
         </header>
+        <NotifyBanner />
 
         {children}
         <MobNav />

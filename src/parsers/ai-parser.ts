@@ -28,6 +28,7 @@ export async function parseWithAI(text: string): Promise<ParsedReceipt> {
     purchase_time:  data.purchase_time  ?? undefined,
     transaction_id: data.transaction_id ?? undefined,
     total:          data.total          ?? undefined,
+    tax:            data.tax            ?? undefined,
     line_items: (data.items ?? []).map((item: any, i: number) => ({
       item_code:       item.item_code                       ?? undefined,
       name:            item.name                            ?? 'Unknown item',

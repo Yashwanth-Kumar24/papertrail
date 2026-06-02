@@ -12,7 +12,8 @@ create table receipts (
   purchase_time   time,
   transaction_id  text,
   total           numeric(10,2) not null default 0,
-  paid_by         text,
+  tax             numeric(10,2),
+  paid_by         text not null,
   image_urls      text[],
   raw_ocr_text    text,
   created_at      timestamptz default now()
@@ -51,6 +52,17 @@ create view item_purchase_history as
 
 alter table receipts      disable row level security;
 alter table receipt_items disable row level security;
+
+create table push_subscriptions (
+  id         uuid primary key default gen_random_uuid(),
+  endpoint   text not null unique,
+  auth       text not null,
+  p256dh     text not null,
+  user_name  text,
+  created_at timestamptz default now()
+);
+
+alter table push_subscriptions disable row level security;
 
 create table shopping_list (
   id          uuid primary key default gen_random_uuid(),

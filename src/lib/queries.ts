@@ -42,6 +42,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       purchase_time:  parsed.purchase_time  ?? null,
       transaction_id: parsed.transaction_id ?? null,
       total:          parsed.total          ?? 0,
+      tax:            parsed.tax            ?? null,
       paid_by:        parsed.paid_by        ?? null,
       raw_ocr_text:   parsed.raw_ocr_text,
     })

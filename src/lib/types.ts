@@ -7,6 +7,7 @@ export interface Receipt {
   purchase_time?: string
   transaction_id?: string
   total: number
+  tax?: number
   paid_by?: string
   image_urls?: string[]
   raw_ocr_text?: string
@@ -46,6 +47,7 @@ export interface ParsedReceipt {
   purchase_time?: string
   transaction_id?: string
   total?: number
+  tax?: number
   paid_by?: string
   line_items: ParsedItem[]
   raw_ocr_text: string
