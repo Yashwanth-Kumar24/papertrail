@@ -12,13 +12,19 @@ export const metadata: Metadata = {
   title: 'PaperTrail',
   description: 'Scan and search your receipts',
   icons: {
-    icon: '/icon.svg',
+    icon:  '/icon.svg',
+    apple: '/apple-icon.png',
+  },
+  appleWebApp: {
+    capable:         true,
+    title:           'PaperTrail',
+    statusBarStyle:  'default',
   },
 }
 
 export const viewport: Viewport = {
   width: 'device-width', initialScale: 1, maximumScale: 1,
-  themeColor: '#FAF8F4',
+  themeColor: '#1D6F50',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

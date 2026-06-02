@@ -15,6 +15,7 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 - **Price history** — see every purchase of an item with trend — flags when price went up (useful for Costco returns)
 - **Needs** — shared household shopping list; add items, check off when bought, done items auto-clear after 2 hours
 - **Delete** — remove receipts from list or detail view with confirmation
+- **PWA** — installable on Android and iOS, runs fullscreen like a native app
 
 ## Tech stack
 
@@ -27,6 +28,7 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 | Database | Supabase Postgres |
 | Storage | Supabase Storage (optional receipt images) |
 | Hosting | Vercel |
+| Mobile | PWA — installable on Android + iOS |
 
 ## Local setup
 
@@ -207,6 +209,22 @@ For receipts that were lost or thrown away:
 1. Go to Scan → click **Lost a receipt? Add manually**
 2. Fill in store, date, total, paid by, and items manually
 3. Save — same duplicate detection applies
+
+## Install as a mobile app (PWA)
+
+PaperTrail works as an installable app on both Android and iOS — no App Store needed.
+
+**Android (Chrome)**
+1. Open the app URL in Chrome
+2. Tap the **3-dot menu → Add to Home Screen** (or accept the install banner if it appears)
+3. Tap **Install** — the app icon appears on your home screen
+
+**iOS (Safari)**
+1. Open the app URL in Safari
+2. Tap the **Share button** (box with arrow at the bottom)
+3. Tap **Add to Home Screen → Add**
+
+Once installed, the app opens fullscreen with no browser address bar, launches directly to your receipts, and works just like a native app. Scanning uses your phone camera directly.
 
 ## Cost at household usage (~10 receipts/week)
 
