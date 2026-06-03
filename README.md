@@ -18,7 +18,6 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 - Browse all receipts in a card grid
 - Filter by store, date, and payer — all three dropdowns coordinate with each other
 - **Batch select** — check multiple receipts and delete them all at once
-- **CSV export** — download all visible receipts as a spreadsheet
 - Paginated (20 per page) with "Load more"
 - Stats bar: total receipts, total spent, line items count, total saved
 
@@ -258,12 +257,6 @@ For long receipts (e.g. a full Costco run):
 ## Batch delete
 
 On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. Includes storage image cleanup.
-
----
-
-## CSV export
-
-On the Receipts page, click **↓ CSV** to download all currently visible receipts (respects active store/date/payer filters) as a spreadsheet. Columns: Date, Store, Location, Paid By, Items, Total, Tax, Txn ID.
 
 ---
 

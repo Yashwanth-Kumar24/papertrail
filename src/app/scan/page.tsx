@@ -82,6 +82,7 @@ export default function ScanPage() {
   const [editTime,    setEditTime]    = useState('')
   const [editTotal,   setEditTotal]   = useState('')
   const [editPaidBy,  setEditPaidBy]  = useState('')
+  const [editTax,     setEditTax]     = useState('')
   const photoRef  = useRef<HTMLInputElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -99,6 +100,7 @@ export default function ScanPage() {
           setEditDate(merged.purchase_date ?? '')
           setEditTime(merged.purchase_time ?? '')
           setEditTotal(merged.total != null ? String(merged.total) : '')
+          setEditTax(merged.tax   != null ? String(merged.tax)   : '')
         }
         return merged
       })
@@ -114,7 +116,7 @@ export default function ScanPage() {
     setItems([blankItem(0)])
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal(''); setEditPaidBy('')
-    setManualMode(true); setStep('review'); setError('')
+    setEditTax(''); setManualMode(true); setStep('review'); setError('')
   }
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -156,6 +158,7 @@ export default function ScanPage() {
         purchase_date: editDate  || parsed.purchase_date,
         purchase_time: editTime  || parsed.purchase_time,
         total:         parseFloat(editTotal) || parsed.total,
+        tax:           editTax !== '' ? parseFloat(editTax) : parsed.tax,
         paid_by:       editPaidBy,
         line_items:    items,
         store: {
@@ -203,7 +206,7 @@ export default function ScanPage() {
     setParsed(null); setItems([]); setImgFiles([])
     setSaveImg(false); setStep('capture'); setError('')
     setEditStore(''); setLocation(''); setEditDate('')
-    setEditTime(''); setEditTotal(''); setEditPaidBy('')
+    setEditTime(''); setEditTotal(''); setEditTax(''); setEditPaidBy('')
     setManualMode(false)
   }
 
@@ -354,15 +357,15 @@ export default function ScanPage() {
               />
             </div>
 
-            {/* Tax — read-only, shown only when AI extracted it */}
-            {parsed.tax != null && parsed.tax > 0 && (
-              <div className="rp-row">
-                <span className="rp-label">Tax</span>
-                <span className="rp-val" style={{fontSize:13,fontFamily:'var(--mono)'}}>
-                  ${Number(parsed.tax).toFixed(2)}
-                </span>
-              </div>
-            )}
+            <div className="rp-row">
+              <span className="rp-label">Tax</span>
+              <input suppressHydrationWarning type="number" step="0.01" value={editTax} onChange={e => setEditTax(e.target.value)}
+                placeholder="0.00"
+                style={{fontSize:13,padding:'2px 6px',textAlign:'right',border:'1px solid transparent',borderRadius:4,width:100,fontFamily:'var(--mono)'}}
+                onFocus={e => e.target.style.borderColor='var(--green)'}
+                onBlur={e  => e.target.style.borderColor='transparent'}
+              />
+            </div>
 
             {/* Paid by — required */}
             <div className="rp-row">

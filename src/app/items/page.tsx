@@ -1,7 +1,7 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems } from '@/lib/queries'
+import { searchItems, getReturnCandidates } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ItemHistory } from '@/lib/types'
 
@@ -72,14 +72,68 @@ function ItemRow({ item }: { item: ItemHistory }) {
   )
 }
 
+function ReturnRow({ item }: { item: ItemHistory }) {
+  const [open, setOpen] = useState(false)
+  const earliest = item.purchases[item.purchases.length - 1]
+  const latest   = item.purchases[0]
+  const increase = latest.final_price - earliest.final_price
+
+  return (
+    <>
+      <tr onClick={() => setOpen(o => !o)} style={{cursor:'pointer'}}>
+        <td><span className="code-badge">{item.item_code ?? '—'}</span></td>
+        <td>
+          <div style={{fontWeight:500}}>{item.name}</div>
+          <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
+        </td>
+        <td style={{fontFamily:'var(--mono)',fontSize:13}}>
+          {money(earliest.final_price)}
+          <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(earliest.purchase_date)}</div>
+        </td>
+        <td style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:600}}>
+          {money(latest.final_price)}
+          <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(latest.purchase_date)}</div>
+        </td>
+        <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--red)'}}>
+          +{money(increase)}
+        </td>
+        <td>
+          <Link href={`/receipts/${latest.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+            Receipt →
+          </Link>
+        </td>
+      </tr>
+      {open && item.purchases.map((p, i) => (
+        <tr key={i} style={{background:'var(--cream)'}}>
+          <td></td>
+          <td style={{fontSize:12,color:'var(--ink2)',paddingLeft:12}}>
+            {i === 0 ? '↳ latest' : i === item.purchases.length - 1 ? '↳ first' : '↳ prev'}
+          </td>
+          <td colSpan={2} style={{fontSize:12,color:'var(--ink2)'}}>{p.store_name} · {fmt(p.purchase_date)}</td>
+          <td style={{fontFamily:'var(--mono)',fontWeight:500,fontSize:12}}>{money(p.final_price)}</td>
+          <td>
+            <Link href={`/receipts/${p.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+              Receipt →
+            </Link>
+          </td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
 function ItemsPageContent() {
+  const [mode,     setMode]     = useState<'search' | 'returns'>('search')
   const [query,    setQuery]    = useState('')
   const [results,  setResults]  = useState<ItemHistory[]>([])
   const [loading,  setLoading]  = useState(false)
   const [searched, setSearched] = useState(false)
+  const [returns,  setReturns]  = useState<ItemHistory[]>([])
+  const [retLoading, setRetLoading] = useState(false)
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const router = useRouter()
   const searchParams = useSearchParams()
+
   const run = useCallback((q: string) => {
     if (!q.trim()) { setResults([]); setSearched(false); return }
     clearTimeout(debounce.current)
@@ -91,81 +145,155 @@ function ItemsPageContent() {
 
   useEffect(() => {
     const q = searchParams.get('q')
-
-    if (q) {
-      setQuery(q)
-      run(q)
-    }
+    if (q) { setQuery(q); run(q) }
   }, [searchParams, run])
+
+  function enterReturns() {
+    setMode('returns')
+    if (returns.length > 0) return
+    setRetLoading(true)
+    getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
+  }
 
   return (
     <main className="page">
       <div className="pg-head">
         <span className="pg-title">Items</span>
-        <span className="pg-sub">Search across all receipts</span>
+        <span className="pg-sub">
+          {mode === 'search' ? 'Search across all receipts' : `${returns.length} price increase${returns.length !== 1 ? 's' : ''} found`}
+        </span>
       </div>
 
-      <div className="search-wrap">
-        <div className="sinput">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input
-            suppressHydrationWarning
-            data-gramm="false"
-            value={query}
-            onChange={e => {
-              const value = e.target.value
-
-              setQuery(value)
-              run(value)
-
-              router.replace(
-                value
-                  ? `/items?q=${encodeURIComponent(value)}`
-                  : '/items'
-              )
-            }}
-            placeholder="Name, item code, or price (e.g. 11.99)…"
-            autoComplete="off"
-          />
-        </div>
+      {/* Mode toggle */}
+      <div style={{display:'flex',gap:8,marginBottom:16}}>
+        <button
+          onClick={() => setMode('search')}
+          style={{
+            fontSize:13,padding:'6px 16px',borderRadius:999,border:'1px solid var(--border2)',
+            background: mode === 'search' ? 'var(--green)' : 'transparent',
+            color:      mode === 'search' ? '#fff' : 'var(--ink2)',
+            fontWeight: mode === 'search' ? 600 : 400,
+            cursor:'pointer',fontFamily:'var(--sans)',
+          }}
+        >
+          🔍 Search
+        </button>
+        <button
+          onClick={enterReturns}
+          style={{
+            fontSize:13,padding:'6px 16px',borderRadius:999,border:'1px solid var(--border2)',
+            background: mode === 'returns' ? 'var(--red-tx)' : 'transparent',
+            color:      mode === 'returns' ? '#fff' : 'var(--ink2)',
+            fontWeight: mode === 'returns' ? 600 : 400,
+            cursor:'pointer',fontFamily:'var(--sans)',
+          }}
+        >
+          ↑ Price alerts
+        </button>
       </div>
 
-      {!searched && (
-        <div className="empty">
-          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" strokeLinecap="round"/><line x1="21" y1="21" x2="16.65" y2="16.65" strokeLinecap="round"/></svg>
-          <p style={{fontWeight:500}}>Search your items</p>
-          <p style={{fontSize:13}}>
-            Name → <strong>MANGO</strong> &nbsp;·&nbsp;
-            Code → <strong>2033869</strong> &nbsp;·&nbsp;
-            Price → <strong>11.99</strong>
-          </p>
-          <p style={{fontSize:12,marginTop:4,color:'var(--green)'}}>Price history and return tips show automatically</p>
-        </div>
+      {/* Search mode */}
+      {mode === 'search' && (
+        <>
+          <div className="search-wrap">
+            <div className="sinput">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input
+                suppressHydrationWarning
+                data-gramm="false"
+                value={query}
+                onChange={e => {
+                  const value = e.target.value
+                  setQuery(value)
+                  run(value)
+                  router.replace(value ? `/items?q=${encodeURIComponent(value)}` : '/items')
+                }}
+                placeholder="Name, item code, or price (e.g. 11.99)…"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+
+          {!searched && (
+            <div className="empty">
+              <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" strokeLinecap="round"/><line x1="21" y1="21" x2="16.65" y2="16.65" strokeLinecap="round"/></svg>
+              <p style={{fontWeight:500}}>Search your items</p>
+              <p style={{fontSize:13}}>
+                Name → <strong>MANGO</strong> &nbsp;·&nbsp;
+                Code → <strong>2033869</strong> &nbsp;·&nbsp;
+                Price → <strong>11.99</strong>
+              </p>
+              <p style={{fontSize:12,marginTop:4,color:'var(--green)'}}>Price history and return tips show automatically</p>
+            </div>
+          )}
+
+          {loading && <div className="empty"><p style={{color:'var(--ink3)'}}>Searching…</p></div>}
+
+          {!loading && searched && results.length === 0 && (
+            <div className="empty"><p style={{fontWeight:500}}>No items found</p><p style={{fontSize:13}}>Try a different name or code</p></div>
+          )}
+
+          {!loading && results.length > 0 && (
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th><th>Item</th><th>Store · Date</th>
+                    <th style={{textAlign:'right'}}>Original</th>
+                    <th style={{textAlign:'right'}}>Discount</th>
+                    <th style={{textAlign:'right'}}>Paid</th>
+                    <th>Trend</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map(item => <ItemRow key={item.item_code ?? item.name} item={item}/>)}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
-      {loading && <div className="empty"><p style={{color:'var(--ink3)'}}>Searching…</p></div>}
+      {/* Returns mode */}
+      {mode === 'returns' && (
+        <>
+          {retLoading && <div className="empty"><p style={{color:'var(--ink3)'}}>Scanning price history…</p></div>}
 
-      {!loading && searched && results.length === 0 && (
-        <div className="empty"><p style={{fontWeight:500}}>No items found</p><p style={{fontSize:13}}>Try a different name or code</p></div>
-      )}
+          {!retLoading && returns.length === 0 && (
+            <div className="empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
+              </svg>
+              <p style={{fontWeight:500}}>No price increases found</p>
+              <p style={{fontSize:13}}>All items are at the same or lower price than when first purchased</p>
+            </div>
+          )}
 
-      {!loading && results.length > 0 && (
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Code</th><th>Item</th><th>Store · Date</th>
-                <th style={{textAlign:'right'}}>Original</th>
-                <th style={{textAlign:'right'}}>Discount</th>
-                <th style={{textAlign:'right'}}>Paid</th>
-                <th>Trend</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {results.map(item => <ItemRow key={item.item_code ?? item.name} item={item}/>)}
-            </tbody>
-          </table>
-        </div>
+          {!retLoading && returns.length > 0 && (
+            <>
+              <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
+                These items cost more now than your first purchase — consider returning and rebuying at the original price.
+              </div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Item</th>
+                      <th>First price</th>
+                      <th>Latest price</th>
+                      <th>Increase</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {returns.map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </>
       )}
     </main>
   )

@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { getSpendingStats } from '@/lib/queries'
+import { PAYER_COLORS } from '@/lib/types'
 
 const money = (n: number) => `$${Number(n).toFixed(2)}`
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
@@ -134,6 +135,39 @@ export default function SpendingPage() {
             </div>
           </div>
 
+          {/* By payer */}
+          {stats.byPayer.length > 0 && (
+            <div className="summary-card" style={{marginBottom:16}}>
+              <div className="summary-card-title">By payer</div>
+              {stats.byPayer.map(p => {
+                const pct = (p.total / stats.totalSpent) * 100
+                return (
+                  <div key={p.payer} className="brand-row-s">
+                    <div style={{flex:1,marginRight:12}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8}}>
+                        <span style={{
+                          fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,
+                          background: PAYER_COLORS[p.payer]?.bg ?? 'var(--cream2)',
+                          color:      PAYER_COLORS[p.payer]?.color ?? 'var(--ink2)',
+                        }}>{p.payer}</span>
+                        <span style={{fontSize:11,color:'var(--ink3)'}}>{p.count} receipt{p.count !== 1 ? 's' : ''} · {pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="bar-bg" style={{marginTop:6}}>
+                        <div className="bar-fill" style={{
+                          width:`${pct}%`,
+                          background: PAYER_COLORS[p.payer]?.color ?? 'var(--green)',
+                        }}/>
+                      </div>
+                    </div>
+                    <div style={{fontFamily:'var(--mono)',fontWeight:500,fontSize:13,whiteSpace:'nowrap'}}>
+                      {money(p.total)}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
           {/* By brand + by month */}
           <div className="summary-grid">
             <div className="summary-card">
@@ -186,6 +220,7 @@ export default function SpendingPage() {
                 <tr>
                   <th>Store</th>
                   <th>Date</th>
+                  <th>Paid by</th>
                   <th>Txn ID</th>
                   <th style={{textAlign:'right'}}>Amount</th>
                 </tr>
@@ -200,6 +235,15 @@ export default function SpendingPage() {
                     <td style={{fontSize:12,color:'var(--ink2)'}}>
                       {fmt(r.purchase_date)}
                       {r.purchase_time ? <><br/><span style={{fontSize:11}}>{r.purchase_time.slice(0,5)}</span></> : ''}
+                    </td>
+                    <td>
+                      {r.paid_by ? (
+                        <span style={{
+                          fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,whiteSpace:'nowrap',
+                          background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
+                          color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
+                        }}>{r.paid_by}</span>
+                      ) : <span style={{color:'var(--ink3)',fontSize:12}}>—</span>}
                     </td>
                     <td style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--ink3)'}}>
                       {r.transaction_id ?? '—'}

@@ -5,6 +5,7 @@ import {
   getReceipts, getReceiptMeta, getStats,
   deleteReceipt, deleteReceipts, RECEIPTS_PAGE_SIZE,
 } from '@/lib/queries'
+import type { ReceiptSort } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
 import { PAYER_COLORS } from '@/lib/types'
 
@@ -29,27 +30,6 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
   )
 }
 
-function exportCSV(receipts: Receipt[]) {
-  const headers = ['Date', 'Store', 'Location', 'Paid By', 'Items', 'Total', 'Tax', 'Txn ID']
-  const rows = receipts.map(r => [
-    r.purchase_date,
-    r.store_name,
-    r.location ?? '',
-    r.paid_by ?? '',
-    r.itemCount ?? '',
-    r.total.toFixed(2),
-    r.tax != null ? r.tax.toFixed(2) : '',
-    r.transaction_id ?? '',
-  ])
-  const csv = [headers, ...rows]
-    .map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
-    .join('\n')
-  const a   = document.createElement('a')
-  a.href    = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-  a.download = `papertrail-${new Date().toISOString().split('T')[0]}.csv`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
 
 export default function ReceiptsPage() {
   const [receipts,      setReceipts]      = useState<Receipt[]>([])
@@ -66,12 +46,13 @@ export default function ReceiptsPage() {
   const [deleting,      setDeleting]      = useState<string | null>(null)
   const [selected,      setSelected]      = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [sortBy,        setSortBy]        = useState<ReceiptSort>('date_desc')
 
-  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean) => {
+  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc') => {
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
       const [{ data, totalCount: tc }, s, m] = await Promise.all([
-        getReceipts(sn || undefined, dt || undefined, pb || undefined, off),
+        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort),
         off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined) : Promise.resolve(null),
         off === 0 ? getReceiptMeta() : Promise.resolve(null),
       ])
@@ -87,8 +68,8 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setSelected(new Set())
-    loadPage(storeName, date, paidBy, 0, false)
-  }, [storeName, date, paidBy, loadPage])
+    loadPage(storeName, date, paidBy, 0, false, sortBy)
+  }, [storeName, date, paidBy, sortBy, loadPage])
 
   const availableStores = useMemo(() => {
     let src = allMeta
@@ -181,19 +162,9 @@ export default function ReceiptsPage() {
 
       <div className="pg-head">
         <span className="pg-title">Receipts</span>
-        <div style={{display:'flex',gap:8,alignItems:'center'}}>
-          {receipts.length > 0 && (
-            <button
-              onClick={() => exportCSV(receipts)}
-              style={{fontSize:12,color:'var(--ink2)',background:'none',border:'1px solid var(--border)',borderRadius:6,padding:'4px 10px',cursor:'pointer'}}
-            >
-              ↓ CSV
-            </button>
-          )}
-          <span className="pg-sub">
-            {loading ? '' : `${receipts.length}${totalCount > receipts.length ? ` of ${totalCount}` : ''} shown`}
-          </span>
-        </div>
+        <span className="pg-sub">
+          {loading ? '' : `${receipts.length}${totalCount > receipts.length ? ` of ${totalCount}` : ''} shown`}
+        </span>
       </div>
 
       <div className="filters">
@@ -209,6 +180,27 @@ export default function ReceiptsPage() {
           <option value="">All payers</option>
           {availablePayers.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
+      </div>
+
+      <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+        {([
+          { key:'date_desc',  label:'Newest first' },
+          { key:'date_asc',   label:'Oldest first' },
+          { key:'total_desc', label:'$ High → Low'  },
+          { key:'total_asc',  label:'$ Low → High'  },
+        ] as {key: ReceiptSort; label: string}[]).map(s => (
+          <button
+            key={s.key}
+            onClick={() => setSortBy(s.key)}
+            style={{
+              fontSize:12,padding:'4px 11px',borderRadius:999,border:'1px solid var(--border2)',
+              background: sortBy === s.key ? 'var(--green)' : 'transparent',
+              color:      sortBy === s.key ? '#fff' : 'var(--ink2)',
+              fontWeight: sortBy === s.key ? 600 : 400,
+              cursor:'pointer',fontFamily:'var(--sans)',
+            }}
+          >{s.label}</button>
+        ))}
       </div>
 
       {/* Batch delete bar */}
@@ -306,7 +298,7 @@ export default function ReceiptsPage() {
           {hasMore && (
             <div style={{textAlign:'center',marginTop:20}}>
               <button
-                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true)}
+                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy)}
                 disabled={loadingMore}
                 style={{
                   background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',

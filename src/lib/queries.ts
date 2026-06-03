@@ -92,23 +92,29 @@ export async function uploadReceiptImage(
 
 const PAGE_SIZE = 20
 
+export type ReceiptSort = 'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'
+
 // ── Get receipts list (paginated, with item count) ─────────
 export async function getReceipts(
   storeName?: string,
   date?: string,
   paidBy?: string,
   offset = 0,
+  sortBy: ReceiptSort = 'date_desc',
 ): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
     .select('*, receipt_items(count)', { count: 'exact' })
-    .order('purchase_date', { ascending: false })
-    .order('created_at',    { ascending: false })
     .range(offset, offset + PAGE_SIZE - 1)
 
   if (storeName) q = q.eq('store_name', storeName)
   if (date)      q = q.eq('purchase_date', date)
   if (paidBy)    q = q.eq('paid_by', paidBy)
+
+  if (sortBy === 'date_desc')  q = q.order('purchase_date', { ascending: false }).order('created_at', { ascending: false })
+  if (sortBy === 'date_asc')   q = q.order('purchase_date', { ascending: true  }).order('created_at', { ascending: true  })
+  if (sortBy === 'total_desc') q = q.order('total', { ascending: false }).order('purchase_date', { ascending: false })
+  if (sortBy === 'total_asc')  q = q.order('total', { ascending: true  }).order('purchase_date', { ascending: false })
 
   const { data, error, count } = await q
   if (error) throw new Error(error.message)
@@ -413,4 +419,66 @@ export async function deleteShoppingItem(id: string): Promise<void> {
 export async function clearDoneItems(): Promise<void> {
   const { error } = await supabase.from('shopping_list').delete().eq('done', true)
   if (error) throw new Error(error.message)
+}
+
+// ── Update receipt header fields ───────────────────────────
+export async function updateReceipt(id: string, data: {
+  brand: string
+  store_name: string
+  location?: string
+  purchase_date: string
+  purchase_time?: string
+  total: number
+  tax?: number
+  paid_by: string
+}): Promise<void> {
+  const { error } = await supabase
+    .from('receipts')
+    .update({
+      brand:         data.brand,
+      store_name:    data.store_name,
+      location:      data.location || null,
+      purchase_date: data.purchase_date,
+      purchase_time: data.purchase_time || null,
+      total:         data.total,
+      tax:           data.tax ?? null,
+      paid_by:       data.paid_by,
+    })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ── Replace all items on a receipt (delete + re-insert) ────
+export async function replaceReceiptItems(
+  receiptId: string,
+  items: { item_code?: string; name: string; original_price: number; discount_amount: number; final_price: number }[],
+): Promise<void> {
+  const { error: delErr } = await supabase.from('receipt_items').delete().eq('receipt_id', receiptId)
+  if (delErr) throw new Error(delErr.message)
+  if (!items.length) return
+  const rows = items.map((item, i) => ({
+    receipt_id:      receiptId,
+    item_code:       item.item_code || null,
+    name:            item.name,
+    original_price:  item.original_price,
+    discount_amount: item.discount_amount,
+    final_price:     item.final_price,
+    sort_order:      i,
+  }))
+  const { error: insErr } = await supabase.from('receipt_items').insert(rows)
+  if (insErr) throw new Error(insErr.message)
+}
+
+// ── Return candidates (items where price trended up) ───────
+export async function getReturnCandidates(): Promise<import('./types').ItemHistory[]> {
+  const { data, error } = await supabase
+    .from('item_purchase_history')
+    .select('*')
+    .order('purchase_date', { ascending: false })
+    .limit(2000)
+  if (error) throw new Error(error.message)
+  const all = groupHistory(data ?? [])
+  return all
+    .filter(i => i.trend === 'up')
+    .sort((a, b) => (b.latest_price - b.min_price) - (a.latest_price - a.min_price))
 }
