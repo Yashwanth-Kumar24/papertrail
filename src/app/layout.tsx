@@ -6,6 +6,7 @@ import MobNav        from '@/components/MobNav'
 import SwRegister    from '@/components/SwRegister'
 import NotifyBanner  from '@/components/NotifyBanner'
 import Link from 'next/link'
+import { Analytics } from '@vercel/analytics/next'
 
 const manrope = Manrope({ subsets: ['latin'], variable: '--font-sans', display: 'swap' })
 const dmMono  = DM_Mono({ subsets: ['latin'], weight: ['400', '500'], variable: '--font-mono', display: 'swap' })
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {children}
         <MobNav />
+        <Analytics />
       </body>
     </html>
   )
