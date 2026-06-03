@@ -90,26 +90,38 @@ export async function uploadReceiptImage(
   return data.publicUrl
 }
 
-// ── Get receipts list ──────────────────────────────────────
+const PAGE_SIZE = 20
+
+// ── Get receipts list (paginated, with item count) ─────────
 export async function getReceipts(
   storeName?: string,
   date?: string,
   paidBy?: string,
-): Promise<Receipt[]> {
+  offset = 0,
+): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
-    .select('*')
+    .select('*, receipt_items(count)', { count: 'exact' })
     .order('purchase_date', { ascending: false })
     .order('created_at',    { ascending: false })
+    .range(offset, offset + PAGE_SIZE - 1)
 
   if (storeName) q = q.eq('store_name', storeName)
   if (date)      q = q.eq('purchase_date', date)
   if (paidBy)    q = q.eq('paid_by', paidBy)
 
-  const { data, error } = await q
+  const { data, error, count } = await q
   if (error) throw new Error(error.message)
-  return (data ?? []) as Receipt[]
+
+  const mapped = (data ?? []).map(({ receipt_items, ...r }: any) => ({
+    ...r,
+    itemCount: receipt_items?.[0]?.count ?? 0,
+  })) as Receipt[]
+
+  return { data: mapped, totalCount: count ?? 0 }
 }
+
+export { PAGE_SIZE as RECEIPTS_PAGE_SIZE }
 
 // ── Get single receipt ─────────────────────────────────────
 export async function getReceiptById(id: string): Promise<Receipt | null> {
@@ -134,18 +146,39 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
   return (data ?? []) as { store_name: string; purchase_date: string; paid_by: string | null }[]
 }
 
-// ── Stats ──────────────────────────────────────────────────
-export async function getStats() {
-  const { data: recs }  = await supabase.from('receipts').select('total')
-  const { data: items } = await supabase.from('receipt_items').select('discount_amount')
-  const total   = (recs   ?? []).reduce((s: number, r: any) => s + Number(r.total), 0)
-  const savings = (items  ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
-  return {
-    receipts: (recs  ?? []).length,
-    total,
-    items:    (items ?? []).length,
-    savings,
-  }
+// ── Stats (filter-aware) ───────────────────────────────────
+export async function getStats(storeName?: string, date?: string, paidBy?: string) {
+  let rq = supabase.from('receipts').select('id, total')
+  if (storeName) rq = rq.eq('store_name', storeName)
+  if (date)      rq = rq.eq('purchase_date', date)
+  if (paidBy)    rq = rq.eq('paid_by', paidBy)
+  const { data: recs } = await rq
+
+  const ids    = (recs ?? []).map((r: any) => r.id)
+  const total  = (recs ?? []).reduce((s: number, r: any) => s + Number(r.total), 0)
+
+  if (!ids.length) return { receipts: 0, total: 0, items: 0, savings: 0 }
+
+  const { data: items, count: itemCount } = await supabase
+    .from('receipt_items')
+    .select('discount_amount', { count: 'exact' })
+    .in('receipt_id', ids)
+
+  const savings = (items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
+  return { receipts: ids.length, total, items: itemCount ?? 0, savings }
+}
+
+// ── Batch delete receipts ─────────────────────────────────
+export async function deleteReceipts(ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const { data } = await supabase.from('receipts').select('image_urls').in('id', ids)
+  const paths = (data ?? [])
+    .flatMap((r: any) => r.image_urls ?? [])
+    .map((url: string) => { const i = url.indexOf('/receipt-images/'); return i !== -1 ? url.slice(i + 16) : null })
+    .filter(Boolean) as string[]
+  if (paths.length) await supabase.storage.from('receipt-images').remove(paths)
+  const { error } = await supabase.from('receipts').delete().in('id', ids)
+  if (error) throw new Error(error.message)
 }
 
 // ── Delete receipt ─────────────────────────────────────────
@@ -274,21 +307,15 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
 
   const receipts = (data ?? []) as Receipt[]
 
-  // Total spent + saved
-  const { data: items } = await supabase
-    .from('receipt_items')
-    .select('receipt_id, discount_amount')
-
-  const itemMap = new Map<string, number>()
-  for (const item of items ?? []) {
-    const prev = itemMap.get(item.receipt_id) ?? 0
-    itemMap.set(item.receipt_id, prev + Number(item.discount_amount))
-  }
-
-  const receiptIds = new Set(receipts.map(r => r.id))
+  // Total saved — only for receipts in the filtered set
+  const receiptIds = receipts.map(r => r.id)
   let totalSaved = 0
-  for (const [id, saved] of itemMap.entries()) {
-    if (receiptIds.has(id)) totalSaved += saved
+  if (receiptIds.length) {
+    const { data: items } = await supabase
+      .from('receipt_items')
+      .select('discount_amount')
+      .in('receipt_id', receiptIds)
+    totalSaved = (items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
   }
 
   const totalSpent = receipts.reduce((s, r) => s + Number(r.total), 0)
@@ -319,6 +346,17 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
     .map(([month, total]) => ({ month, total }))
     .sort((a, b) => a.month.localeCompare(b.month))
 
+  // By payer
+  const payerMap = new Map<string, { count: number; total: number }>()
+  for (const r of receipts) {
+    if (!r.paid_by) continue
+    const prev = payerMap.get(r.paid_by) ?? { count: 0, total: 0 }
+    payerMap.set(r.paid_by, { count: prev.count + 1, total: prev.total + Number(r.total) })
+  }
+  const byPayer = [...payerMap.entries()]
+    .map(([payer, v]) => ({ payer, ...v }))
+    .sort((a, b) => b.total - a.total)
+
   return {
     totalSpent,
     totalSaved,
@@ -326,6 +364,7 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
     avgPerTrip,
     byBrand,
     byMonth,
+    byPayer,
     receipts,
   }
 }
@@ -368,5 +407,10 @@ export async function markShoppingItemDone(id: string): Promise<void> {
 
 export async function deleteShoppingItem(id: string): Promise<void> {
   const { error } = await supabase.from('shopping_list').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function clearDoneItems(): Promise<void> {
+  const { error } = await supabase.from('shopping_list').delete().eq('done', true)
   if (error) throw new Error(error.message)
 }

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getShoppingList, addShoppingItem, markShoppingItemDone, deleteShoppingItem } from '@/lib/queries'
+import { getShoppingList, addShoppingItem, markShoppingItemDone, deleteShoppingItem, clearDoneItems } from '@/lib/queries'
 import type { ShoppingItem } from '@/lib/types'
 import { PAYERS, PAYER_COLORS } from '@/lib/types'
 
@@ -151,11 +151,21 @@ export default function ListPage() {
           {done.length > 0 && (
             <>
               <div style={{
-                fontSize:11, fontWeight:600, color:'var(--ink3)',
-                textTransform:'uppercase', letterSpacing:'.06em',
+                display:'flex', alignItems:'center', justifyContent:'space-between',
                 marginTop:16, marginBottom:4,
               }}>
-                Done — disappear after 2 hrs
+                <span style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+                  Done — disappear after 2 hrs
+                </span>
+                <button
+                  onClick={async () => {
+                    setItems(prev => prev.filter(i => !i.done))
+                    try { await clearDoneItems() } catch { load() }
+                  }}
+                  style={{fontSize:11,color:'var(--ink3)',background:'none',border:'none',cursor:'pointer',textDecoration:'underline'}}
+                >
+                  Clear all
+                </button>
               </div>
               {done.map(item => (
                 <div key={item.id} className="list-item done">

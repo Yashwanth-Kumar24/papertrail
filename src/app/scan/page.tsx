@@ -395,7 +395,7 @@ export default function ScanPage() {
 
             <div className="rp-items">
               <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:8,paddingBottom:6,borderBottom:'1px solid var(--border)'}}>
-                {items.filter(i => i.final_price > 0).length} items — click any field to edit
+                {items.length} items — click any field to edit
               </div>
 
               {items.map((item, i) => (

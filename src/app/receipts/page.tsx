@@ -1,9 +1,9 @@
 'use client'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  getReceipts, getReceiptMeta,
-  getStats, deleteReceipt
+  getReceipts, getReceiptMeta, getStats,
+  deleteReceipt, deleteReceipts, RECEIPTS_PAGE_SIZE,
 } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
 import { PAYER_COLORS } from '@/lib/types'
@@ -21,20 +21,41 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
           Permanently deletes the receipt, all items, and any saved image. Cannot be undone.
         </p>
         <div style={{display:'flex',gap:10,justifyContent:'flex-end'}}>
-          <button onClick={onCancel} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>
-            Cancel
-          </button>
-          <button onClick={onConfirm} style={{padding:'8px 16px',borderRadius:8,border:'none',background:'var(--red-bg)',color:'var(--red-tx)',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-            Yes, delete
-          </button>
+          <button onClick={onCancel} style={{padding:'8px 16px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>Cancel</button>
+          <button onClick={onConfirm} style={{padding:'8px 16px',borderRadius:8,border:'none',background:'var(--red-bg)',color:'var(--red-tx)',fontSize:13,fontWeight:600,cursor:'pointer'}}>Yes, delete</button>
         </div>
       </div>
     </div>
   )
 }
 
+function exportCSV(receipts: Receipt[]) {
+  const headers = ['Date', 'Store', 'Location', 'Paid By', 'Items', 'Total', 'Tax', 'Txn ID']
+  const rows = receipts.map(r => [
+    r.purchase_date,
+    r.store_name,
+    r.location ?? '',
+    r.paid_by ?? '',
+    r.itemCount ?? '',
+    r.total.toFixed(2),
+    r.tax != null ? r.tax.toFixed(2) : '',
+    r.transaction_id ?? '',
+  ])
+  const csv = [headers, ...rows]
+    .map(row => row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+  const a   = document.createElement('a')
+  a.href    = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  a.download = `papertrail-${new Date().toISOString().split('T')[0]}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 export default function ReceiptsPage() {
   const [receipts,      setReceipts]      = useState<Receipt[]>([])
+  const [totalCount,    setTotalCount]    = useState(0)
+  const [offset,        setOffset]        = useState(0)
+  const [loadingMore,   setLoadingMore]   = useState(false)
   const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
   const [storeName,     setStoreName]     = useState('')
@@ -43,20 +64,32 @@ export default function ReceiptsPage() {
   const [loading,       setLoading]       = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
+  const [selected,      setSelected]      = useState<Set<string>>(new Set())
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
-  useEffect(() => {
-    Promise.all([getReceiptMeta(), getStats()])
-      .then(([m, s]) => { setAllMeta(m); setStats(s) })
+  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean) => {
+    if (!append) setLoading(true); else setLoadingMore(true)
+    try {
+      const [{ data, totalCount: tc }, s, m] = await Promise.all([
+        getReceipts(sn || undefined, dt || undefined, pb || undefined, off),
+        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined) : Promise.resolve(null),
+        off === 0 ? getReceiptMeta() : Promise.resolve(null),
+      ])
+      setReceipts(prev => append ? [...prev, ...data] : data)
+      setTotalCount(tc)
+      setOffset(off)
+      if (s) setStats(s)
+      if (m) setAllMeta(m)
+    } finally {
+      if (!append) setLoading(false); else setLoadingMore(false)
+    }
   }, [])
 
   useEffect(() => {
-    setLoading(true)
-    getReceipts(storeName || undefined, date || undefined, paidBy || undefined)
-      .then(setReceipts)
-      .finally(() => setLoading(false))
-  }, [storeName, date, paidBy])
+    setSelected(new Set())
+    loadPage(storeName, date, paidBy, 0, false)
+  }, [storeName, date, paidBy, loadPage])
 
-  // Each dropdown is filtered by the OTHER two active selections
   const availableStores = useMemo(() => {
     let src = allMeta
     if (date)   src = src.filter(m => m.purchase_date === date)
@@ -84,14 +117,12 @@ export default function ReceiptsPage() {
     if (date   && !sub.some(m => m.purchase_date === date))   setDate('')
     if (paidBy && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
   }
-
   function handleDateChange(d: string) {
     setDate(d)
     const sub = d ? allMeta.filter(m => m.purchase_date === d) : allMeta
     if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
     if (paidBy    && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
   }
-
   function handlePayerChange(p: string) {
     setPaidBy(p)
     const sub = p ? allMeta.filter(m => m.paid_by === p) : allMeta
@@ -104,23 +135,41 @@ export default function ReceiptsPage() {
     try {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats()])
+      setTotalCount(c => c - 1)
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined)])
       setAllMeta(m); setStats(s)
-    } catch {
-      alert('Delete failed. Please try again.')
-    } finally {
-      setDeleting(null)
-      setConfirmDelete(null)
-    }
+    } catch { alert('Delete failed. Please try again.') }
+    finally { setDeleting(null); setConfirmDelete(null) }
   }
+
+  async function handleBatchDelete() {
+    if (!selected.size) return
+    setBatchDeleting(true)
+    try {
+      await deleteReceipts([...selected])
+      setReceipts(prev => prev.filter(r => !selected.has(r.id)))
+      setTotalCount(c => c - selected.size)
+      setSelected(new Set())
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined)])
+      setAllMeta(m); setStats(s)
+    } catch { alert('Batch delete failed.') }
+    finally { setBatchDeleting(false) }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const hasMore = receipts.length < totalCount
 
   return (
     <main className="page">
       {confirmDelete && (
-        <DeleteConfirm
-          onConfirm={() => handleDelete(confirmDelete)}
-          onCancel={() => setConfirmDelete(null)}
-        />
+        <DeleteConfirm onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)}/>
       )}
 
       <div className="stat-grid">
@@ -132,7 +181,19 @@ export default function ReceiptsPage() {
 
       <div className="pg-head">
         <span className="pg-title">Receipts</span>
-        <span className="pg-sub">{receipts.length} shown</span>
+        <div style={{display:'flex',gap:8,alignItems:'center'}}>
+          {receipts.length > 0 && (
+            <button
+              onClick={() => exportCSV(receipts)}
+              style={{fontSize:12,color:'var(--ink2)',background:'none',border:'1px solid var(--border)',borderRadius:6,padding:'4px 10px',cursor:'pointer'}}
+            >
+              ↓ CSV
+            </button>
+          )}
+          <span className="pg-sub">
+            {loading ? '' : `${receipts.length}${totalCount > receipts.length ? ` of ${totalCount}` : ''} shown`}
+          </span>
+        </div>
       </div>
 
       <div className="filters">
@@ -150,6 +211,21 @@ export default function ReceiptsPage() {
         </select>
       </div>
 
+      {/* Batch delete bar */}
+      {selected.size > 0 && (
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'var(--red-bg)',borderRadius:'var(--r)',marginBottom:12}}>
+          <span style={{fontSize:13,color:'var(--red-tx)',flex:1}}>{selected.size} receipt{selected.size !== 1 ? 's' : ''} selected</span>
+          <button onClick={() => setSelected(new Set())} style={{fontSize:12,background:'none',border:'none',color:'var(--red-tx)',cursor:'pointer'}}>Cancel</button>
+          <button
+            onClick={handleBatchDelete}
+            disabled={batchDeleting}
+            style={{fontSize:12,fontWeight:600,background:'var(--red-tx)',color:'#fff',border:'none',borderRadius:6,padding:'5px 14px',cursor:'pointer'}}
+          >
+            {batchDeleting ? 'Deleting…' : `Delete ${selected.size}`}
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="empty"><p>Loading…</p></div>
       ) : receipts.length === 0 ? (
@@ -159,54 +235,90 @@ export default function ReceiptsPage() {
           <p style={{fontSize:13}}>Scan your first receipt to get started</p>
         </div>
       ) : (
-        <div className="rcard-grid">
-          {receipts.map(r => (
-            <div key={r.id} className="rcard">
-              <Link href={`/receipts/${r.id}`} style={{textDecoration:'none',color:'inherit',display:'block'}}>
-                <div className="rcard-head">
-                  <div>
-                    <div className="rcard-store">{r.store_name}</div>
-                    {r.location && <div className="rcard-meta">{r.location}</div>}
-                    <div className="rcard-meta">
-                      {fmt(r.purchase_date)}
-                      {r.purchase_time ? ` · ${r.purchase_time.slice(0,5)}` : ''}
+        <>
+          <div className="rcard-grid">
+            {receipts.map(r => (
+              <div key={r.id} className="rcard">
+                <Link href={`/receipts/${r.id}`} style={{textDecoration:'none',color:'inherit',display:'block'}}>
+                  <div className="rcard-head">
+                    <div style={{flex:1,minWidth:0}}>
+                      <div className="rcard-store">{r.store_name}</div>
+                      {r.location && <div className="rcard-meta">{r.location}</div>}
+                      <div className="rcard-meta">
+                        {fmt(r.purchase_date)}
+                        {r.purchase_time ? ` · ${r.purchase_time.slice(0,5)}` : ''}
+                        {r.itemCount != null && r.itemCount > 0 ? ` · ${r.itemCount} items` : ''}
+                      </div>
+                      {r.paid_by && (
+                        <span style={{
+                          display:'inline-block',marginTop:4,
+                          fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
+                          background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
+                          color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
+                        }}>
+                          {r.paid_by}
+                        </span>
+                      )}
                     </div>
-                    {r.paid_by && (
-                      <span style={{
-                        display:'inline-block',marginTop:4,
-                        fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
-                        background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
-                        color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
-                      }}>
-                        {r.paid_by}
-                      </span>
-                    )}
+                    <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0,paddingLeft:12}}>
+                      <button
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); toggleSelect(r.id) }}
+                        style={{
+                          width:18,height:18,borderRadius:4,
+                          border:`2px solid ${selected.has(r.id) ? 'var(--green)' : 'var(--border2)'}`,
+                          background: selected.has(r.id) ? 'var(--green)' : 'transparent',
+                          cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',
+                          padding:0,flexShrink:0,
+                        }}
+                        aria-label="Select"
+                      >
+                        {selected.has(r.id) && (
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <polyline points="1.5 5 4 7.5 8.5 2.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </button>
+                      <div className="rcard-total">{money(r.total)}</div>
+                    </div>
                   </div>
-                  <div style={{textAlign:'right'}}>
-                    <div className="rcard-total">{money(r.total)}</div>
+                  <div className="rcard-txn">
+                    <span>{r.transaction_id ? `Txn: ${r.transaction_id}` : 'No txn ID'}</span>
                   </div>
-                </div>
-                <div className="rcard-txn">
-                  <span>{r.transaction_id ? `Txn: ${r.transaction_id}` : 'No txn ID'}</span>
-                </div>
-              </Link>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4,borderTop:'1px solid var(--border)'}}>
-                <Link href={`/receipts/${r.id}`} style={{fontSize:13,fontWeight:500,color:'var(--green)',textDecoration:'none'}}>
-                  View receipt →
                 </Link>
-                <button
-                  onClick={() => setConfirmDelete(r.id)}
-                  disabled={deleting === r.id}
-                  style={{background:'none',border:'none',color:'var(--ink3)',cursor:'pointer',fontSize:12,fontWeight:500,padding:'2px 4px',borderRadius:4}}
-                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
-                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--ink3)')}
-                >
-                  {deleting === r.id ? 'Deleting…' : 'Delete'}
-                </button>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4,borderTop:'1px solid var(--border)'}}>
+                  <Link href={`/receipts/${r.id}`} style={{fontSize:13,fontWeight:500,color:'var(--green)',textDecoration:'none'}}>
+                    View receipt →
+                  </Link>
+                  <button
+                    onClick={() => setConfirmDelete(r.id)}
+                    disabled={deleting === r.id}
+                    style={{background:'none',border:'none',color:'var(--ink3)',cursor:'pointer',fontSize:12,fontWeight:500,padding:'2px 4px',borderRadius:4}}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--red)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--ink3)')}
+                  >
+                    {deleting === r.id ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
               </div>
+            ))}
+          </div>
+
+          {hasMore && (
+            <div style={{textAlign:'center',marginTop:20}}>
+              <button
+                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true)}
+                disabled={loadingMore}
+                style={{
+                  background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',
+                  padding:'9px 28px',fontSize:13,color:'var(--ink2)',cursor:'pointer',
+                  fontFamily:'var(--sans)',
+                }}
+              >
+                {loadingMore ? 'Loading…' : `Load more (${totalCount - receipts.length} remaining)`}
+              </button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </main>
   )

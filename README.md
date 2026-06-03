@@ -2,27 +2,61 @@
 
 A personal receipt tracker — scan any store receipt, extract items with AI, search your purchase history, and track spending over time. Built for household use with a focus on Costco returns and price tracking.
 
+**Live:** [papertrail-home.vercel.app](https://papertrail-home.vercel.app)
+
 ## What it does
 
-- **Scan** — take a photo or upload a receipt image from any store
-- **OCR + AI** — Google Vision reads the image, OpenAI extracts structured items, discounts, totals
-- **Review & edit** — fix any field before saving — store, location, date, time, total, paid by, items
+### Scan
+- Take a photo or upload a receipt image from any store
+- Google Vision reads the image; OpenAI GPT-4o-mini extracts structured items, discounts, and totals
+- Review and edit every field before saving — store, location, date, time, total, tax, paid by, items
 - **Manual entry** — no receipt? Use "Lost a receipt? Add manually" to type everything in by hand
-- **Paid by** — track who paid for each receipt (household members); required on every receipt
-- **Receipts** — browse all receipts, filter by store, date, and payer — all three dropdowns coordinate with each other
-- **Spending** — date range analytics — total spent, by store, by month, avg per trip, total saved
-- **Items** — search any item by name, code, or price across all receipts
-- **Price history** — see every purchase of an item with trend — flags when price went up (useful for Costco returns)
-- **Needs** — shared household shopping list; add items, check off when bought, done items auto-clear after 2 hours
-- **Delete** — remove receipts from list or detail view with confirmation
-- **PWA** — installable on Android and iOS, runs fullscreen like a native app
+- **Multi-section scanning** — long receipt? Scan in sections; items merge automatically with deduplication
+- **Paid by** — required on every receipt; tracks which household member paid
+
+### Receipts
+- Browse all receipts in a card grid
+- Filter by store, date, and payer — all three dropdowns coordinate with each other
+- **Batch select** — check multiple receipts and delete them all at once
+- **CSV export** — download all visible receipts as a spreadsheet
+- Paginated (20 per page) with "Load more"
+- Stats bar: total receipts, total spent, line items count, total saved
+
+### Spending
+- Date range analytics with preset buttons (This week / This month / Last 3 months / This year / All time) and a custom date picker
+- Summary cards: total spent, receipt count, avg per trip, total saved via discounts
+- By-store bar chart, by-month bar chart
+- Full receipt list for the selected period with links to detail views
+
+### Items
+- Search any item by name, item code, or price across all receipts
+- Full purchase history per item: every date, store, and price paid
+- Price trend indicator — up / down / stable / single purchase
+- Return flag — red highlight when the latest price is higher than the earliest (useful for Costco price-match returns)
+
+### Needs
+- Shared household shopping list synced via Supabase
+- Add items tagged with who added them (color-coded by payer)
+- Tap the circle to mark done — item moves to a "Done" section
+- Tap a done item to undo
+- Done items auto-clear after 2 hours (configurable)
+- List re-syncs whenever the browser tab regains focus
+
+### Other
+- **Delete** — remove receipts from the list or detail view with confirmation
+- **Push notifications** — household members get a push notification when someone saves a new receipt (title, store, total)
+- **PWA** — installable on Android and iOS; runs fullscreen like a native app
+- **Favicon + app icon** — green receipt icon shown in browser tabs and on home screen
+
+---
 
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
 | Framework | Next.js 15 (App Router, TypeScript) |
-| Styling | Plain CSS with CSS variables |
+| Styling | Plain CSS with CSS variables, warm cream aesthetic |
+| Fonts | Manrope (sans), DM Mono (monospace) |
 | OCR | Google Cloud Vision API (server-side) |
 | AI parsing | OpenAI GPT-4o-mini (server-side) |
 | Database | Supabase Postgres |
@@ -30,11 +64,13 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 | Hosting | Vercel |
 | Mobile | PWA — installable on Android + iOS |
 
+---
+
 ## Local setup
 
 **1. Clone and install**
 ```
-git clone https://github.com/YOUR_USERNAME/papertrail.git
+git clone https://github.com/Yashwanth-Kumar24/papertrail.git
 cd papertrail
 npm install
 ```
@@ -48,7 +84,11 @@ OPENAI_API_KEY=sk-...
 GOOGLE_VISION_API_KEY=AIza...
 
 NEXT_PUBLIC_USE_GOOGLE_OCR=true
+NEXT_PUBLIC_USE_AI_PARSER=true
 ```
+
+Set `NEXT_PUBLIC_USE_GOOGLE_OCR=false` to fall back to Tesseract.js (free, runs in browser, less accurate).  
+Set `NEXT_PUBLIC_USE_AI_PARSER=false` to skip AI parsing and get raw OCR text only.
 
 **3. Supabase setup**
 - Run `supabase/schema.sql` in the Supabase SQL editor
@@ -80,6 +120,8 @@ npm run dev
 
 Open `http://localhost:3000`
 
+---
+
 ## Deploy to Vercel
 
 ```
@@ -97,8 +139,11 @@ Add these in Vercel → Project → Settings → Environment Variables:
 | `OPENAI_API_KEY` | your OpenAI key | Production + Preview |
 | `GOOGLE_VISION_API_KEY` | your Google key | Production + Preview |
 | `NEXT_PUBLIC_USE_GOOGLE_OCR` | `true` | All |
+| `NEXT_PUBLIC_USE_AI_PARSER` | `true` | All |
 
 Redeploy once after adding env vars. Future deploys are automatic on every `git push`.
+
+---
 
 ## Project structure
 
@@ -106,27 +151,36 @@ Redeploy once after adding env vars. Future deploys are automatic on every `git 
 src/
   app/
     api/
-      ocr/route.ts       Server route — Google Vision OCR
-      parse/route.ts     Server route — OpenAI parsing with prompt
-    receipts/            Receipt list + detail page
-    spending/            Spending analytics with date range
-    items/               Item search with price history
-    needs/               Shared household shopping list (Needs tab)
-    scan/                Scan flow — capture, OCR, review, save, manual entry
+      ocr/route.ts         Server route — Google Vision OCR
+      parse/route.ts       Server route — OpenAI parsing
+      notify/route.ts      Server route — send push notifications to subscribers
+      subscribe/route.ts   Server route — register push notification subscriptions
+    sw/route.ts            Service worker — handles push notifications for PWA
+    receipts/              Receipt list + [id] detail page
+    spending/              Spending analytics with date range
+    items/                 Item search with price history and return flags
+    needs/                 Shared household shopping list
+    scan/                  Scan flow — capture, OCR, review, save, manual entry
+    layout.tsx             Root layout — nav, metadata, PWA manifest link
+    manifest.ts            PWA manifest
+    apple-icon.tsx         iOS home screen icon (180×180)
+    icon.tsx               Browser favicon (32×32)
   components/
-    NavLinks.tsx         Desktop top nav
-    MobNav.tsx           Mobile bottom nav
+    NavLinks.tsx           Desktop top nav
+    MobNav.tsx             Mobile bottom nav (≤768px)
   lib/
-    types.ts             TypeScript interfaces + PAYERS/PAYER_COLORS/ShoppingItem
-    supabase.ts          Supabase client
-    queries.ts           All DB operations
-    ocr.ts               OCR wrapper — Google Vision (with compression) or Tesseract fallback
+    types.ts               TypeScript interfaces + PAYERS, PAYER_COLORS, BRAND_LABELS
+    supabase.ts            Supabase client
+    queries.ts             All DB operations
+    ocr.ts                 OCR wrapper — Google Vision (with compression) or Tesseract fallback
   parsers/
-    ai-parser.ts         AI parser — calls /api/parse, normalizes output
-    registry.ts          Entry point — mergeReceipts utility
+    ai-parser.ts           AI parser — calls /api/parse, normalizes output
+    registry.ts            Entry point — parseReceipt() + mergeReceipts()
 supabase/
-  schema.sql             DB schema — run once in Supabase SQL editor
+  schema.sql               DB schema — run once in Supabase SQL editor
 ```
+
+---
 
 ## Database schema
 
@@ -134,7 +188,7 @@ supabase/
 receipts:
   id, brand, store_name, location,
   purchase_date, purchase_time, transaction_id,
-  total, paid_by, image_urls, raw_ocr_text, created_at
+  total, tax, paid_by, image_urls, raw_ocr_text, created_at
 
 receipt_items:
   id, receipt_id, item_code, name,
@@ -143,18 +197,24 @@ receipt_items:
 
 shopping_list:
   id, text, added_by, done, done_at, created_at
+
+-- View used by item search:
+item_purchase_history (joins receipts + receipt_items)
 ```
 
+`brand` is a normalized key (`costco`, `walmart`, `whole-foods`, `ross`, `target`, `safeway`, `trader-joes`, `kroger`, `cvs`, `walgreens`, `aldi`, `home-depot`, `lowes`, `other`). Unknown stores fall through to `other` and display by exact name.
+
 `paid_by` stores the household member who paid (e.g. `Yash`, `Alekhya`, `Pavan`).
-No stores table — `brand` is a normalized key on receipts (`costco`, `walmart`, `whole-foods`, etc).
 
 ### Duplicate prevention
 
-Two-tier check on save:
+Two-tier check on every save:
 - **Has transaction ID** → checks `store_name + purchase_date + transaction_id`
 - **No transaction ID** → checks `store_name + purchase_date + total` (+ time if available)
 
 Both enforced at the application level and via partial unique indexes in Postgres.
+
+---
 
 ## OCR + AI pipeline
 
@@ -164,34 +224,61 @@ Photo
   → Google Vision API (/api/ocr)
   → Raw text
   → OpenAI GPT-4o-mini (/api/parse, max_tokens: 4000)
-  → Structured JSON (store, date, items, discounts)
-  → Review screen (all fields editable + paid by required)
+  → Structured JSON (store, date, items, discounts, tax, total)
+  → Review screen (all fields editable; paid by required)
   → Save to Supabase
+  → Push notification sent to all subscribed household devices
 ```
 
 Fallback: if `NEXT_PUBLIC_USE_GOOGLE_OCR=false`, Tesseract.js runs in the browser (free, less accurate).
 
+---
+
 ## Paid by
 
-Each receipt requires a payer selected from a fixed household list (`Yash`, `Alekhya`, `Pavan`). To change names, update the `PAYERS` constant in `src/lib/types.ts` and the `PAYER_COLORS` map.
+Each receipt requires a payer selected from a fixed household list (`Yash`, `Alekhya`, `Pavan`). To change names, update the `PAYERS` constant and the `PAYER_COLORS` map in `src/lib/types.ts`.
 
 On first use, backfill existing receipts:
 ```sql
 UPDATE receipts SET paid_by = 'YourName' WHERE paid_by IS NULL;
 ```
 
+---
+
 ## Multi-section scanning
 
-For long receipts (e.g. full Costco run):
+For long receipts (e.g. a full Costco run):
 1. Scan the top half — items extracted and shown in review
 2. Click **+ Add section** — scan the bottom half
 3. Items merge automatically, deduplicating by item code or name
 4. Metadata (transaction ID, date, total) fills in from whichever section had it
 
+---
+
+## Batch delete
+
+On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. Includes storage image cleanup.
+
+---
+
+## CSV export
+
+On the Receipts page, click **↓ CSV** to download all currently visible receipts (respects active store/date/payer filters) as a spreadsheet. Columns: Date, Store, Location, Paid By, Items, Total, Tax, Txn ID.
+
+---
+
+## Push notifications
+
+When any household member saves a new receipt, all subscribed devices get a push notification showing who paid, which store, and the total. To subscribe, install the PWA and accept the notification prompt (shown automatically in the app).
+
+Implemented via the Web Push API. Subscriptions are stored in Supabase. Server-side sending via `/api/notify`.
+
+---
+
 ## Needs — shared shopping list
 
 The Needs tab is a shared household list synced via Supabase:
-- Add items with your name (Yash / Alekhya / Pavan)
+- Add items with your name (Yash / Alekhya / Pavan) — color-coded pills
 - Tap the circle to mark done — item moves to a "Done" section
 - Done items auto-clear after **2 hours** (configurable via `DONE_VISIBLE_HOURS` in `src/lib/queries.ts`)
 - Tap a done item's green check to undo
@@ -200,15 +287,10 @@ The Needs tab is a shared household list synced via Supabase:
 To change the auto-clear window, edit one constant:
 ```ts
 // src/lib/queries.ts
-const DONE_VISIBLE_HOURS = 2  // change to any number of hours
+const DONE_VISIBLE_HOURS = 2
 ```
 
-## Manual receipt entry
-
-For receipts that were lost or thrown away:
-1. Go to Scan → click **Lost a receipt? Add manually**
-2. Fill in store, date, total, paid by, and items manually
-3. Save — same duplicate detection applies
+---
 
 ## Install as a mobile app (PWA)
 
@@ -216,15 +298,17 @@ PaperTrail works as an installable app on both Android and iOS — no App Store 
 
 **Android (Chrome)**
 1. Open the app URL in Chrome
-2. Tap the **3-dot menu → Add to Home Screen** (or accept the install banner if it appears)
-3. Tap **Install** — the app icon appears on your home screen
+2. Tap the **3-dot menu → Add to Home Screen** (or accept the install banner)
+3. Tap **Install**
 
 **iOS (Safari)**
 1. Open the app URL in Safari
-2. Tap the **Share button** (box with arrow at the bottom)
+2. Tap the **Share button** (box with arrow)
 3. Tap **Add to Home Screen → Add**
 
-Once installed, the app opens fullscreen with no browser address bar, launches directly to your receipts, and works just like a native app. Scanning uses your phone camera directly.
+Once installed, the app opens fullscreen with no browser address bar, scanning uses the camera directly, and push notifications work for new receipts.
+
+---
 
 ## Cost at household usage (~10 receipts/week)
 
@@ -237,21 +321,35 @@ Once installed, the app opens fullscreen with no browser address bar, launches d
 
 Total: **under $1/year**
 
+---
+
 ## Supported stores
 
 The AI parser handles any store automatically. Tested with:
 - Costco Wholesale
 - Whole Foods Market
 - Walmart
-- Ross
-- Apna Bazar, Mayuri Foods (and any other local store — no configuration needed)
+- Ross Dress for Less
+- Target
+- Safeway
+- Trader Joe's
+- Apna Bazar, Mayuri Foods, CrossRoads Italiano (and any other local store)
 
-Brand normalization ensures consistent filtering for known chains. Unknown stores appear by their exact name in all filters.
+Brand normalization ensures consistent filtering for known chains. Unknown stores appear by their exact name.
+
+---
+
+## Household members (payers)
+
+Default: `Yash`, `Alekhya`, `Pavan`. To change, edit `PAYERS` and `PAYER_COLORS` in `src/lib/types.ts`. No database migration needed.
+
+---
 
 ## Stage 2 planned
 
-- Edit receipt after saving (item name, price corrections)
-- Dedicated return tracker view (items where price went up)
+- Edit receipt after saving (item name, price corrections, paid by)
+- Dedicated return tracker view (items where price went up since first purchase)
+- Spending breakdown by payer (data is already computed; UI pending)
 - Multi-user support with auth
 - Bring Your Own Key (BYOK) for OpenAI and Google Vision
 - Docker Compose for self-hosting

@@ -9,6 +9,7 @@ export interface Receipt {
   total: number
   tax?: number
   paid_by?: string
+  itemCount?: number
   image_urls?: string[]
   raw_ocr_text?: string
   created_at: string
