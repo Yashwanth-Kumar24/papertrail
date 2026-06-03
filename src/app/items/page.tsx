@@ -8,11 +8,13 @@ import type { ItemHistory } from '@/lib/types'
 const fmt = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
 const money = (n: number) => `$${Number(n).toFixed(2)}`
 
-function TrendBadge({ trend, min, max }: { trend: ItemHistory['trend'], min: number, max: number }) {
+function TrendBadge({ trend, min, max, latestPrice }: { trend: ItemHistory['trend'], min: number, max: number, latestPrice: number }) {
   if (trend === 'single' || trend === 'stable') return <span style={{color:'var(--ink3)', fontSize:12}}>= stable</span>
-  const diff = Math.abs(max - min).toFixed(2)
-  if (trend === 'up')   return <><span className="tr-up">↑ +${diff}</span> <span className="ret-tip">check return</span></>
-  if (trend === 'down') return <span className="tr-dn">↓ −${diff}</span>
+  if (trend === 'up')   return <span className="tr-up">↑ +${Math.abs(max - min).toFixed(2)}</span>
+  if (trend === 'down') {
+    const savings = (max - latestPrice).toFixed(2)
+    return <><span className="tr-dn">↓ −${Math.abs(max - min).toFixed(2)}</span>{' '}<span className="ret-tip">return opportunity</span></>
+  }
   return null
 }
 
@@ -41,7 +43,7 @@ function ItemRow({ item }: { item: ItemHistory }) {
         <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600}}>
           {money(latest.final_price)}
         </td>
-        <td><TrendBadge trend={item.trend} min={item.min_price} max={item.max_price}/></td>
+        <td><TrendBadge trend={item.trend} min={item.min_price} max={item.max_price} latestPrice={item.latest_price}/></td>
         <td>
           <Link href={`/receipts/${latest.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
             Receipt →
@@ -73,10 +75,11 @@ function ItemRow({ item }: { item: ItemHistory }) {
 }
 
 function ReturnRow({ item }: { item: ItemHistory }) {
-  const [open, setOpen] = useState(false)
-  const earliest = item.purchases[item.purchases.length - 1]
-  const latest   = item.purchases[0]
-  const increase = latest.final_price - earliest.final_price
+  const [open, setOpen]   = useState(false)
+  const latest            = item.purchases[0]
+  const expensive         = item.max_price_purchase!
+  const savings           = item.max_price - item.latest_price
+  const daysSince         = Math.floor((Date.now() - new Date(expensive.purchase_date).getTime()) / 86400000)
 
   return (
     <>
@@ -86,20 +89,27 @@ function ReturnRow({ item }: { item: ItemHistory }) {
           <div style={{fontWeight:500}}>{item.name}</div>
           <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
         </td>
+        {/* What you paid (the return candidate) */}
         <td style={{fontFamily:'var(--mono)',fontSize:13}}>
-          {money(earliest.final_price)}
-          <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(earliest.purchase_date)}</div>
+          {money(expensive.final_price)}
+          <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(expensive.purchase_date)}</div>
+          <div style={{fontSize:10,color: daysSince <= 90 ? 'var(--green)' : 'var(--ink3)'}}>
+            {daysSince}d ago
+          </div>
         </td>
+        {/* Current (cheaper) price */}
         <td style={{fontFamily:'var(--mono)',fontSize:13,fontWeight:600}}>
           {money(latest.final_price)}
           <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(latest.purchase_date)}</div>
         </td>
-        <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--red)'}}>
-          +{money(increase)}
+        {/* Savings */}
+        <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--green)'}}>
+          −{money(savings)}
         </td>
+        {/* Link to the expensive receipt — the one to bring to the store */}
         <td>
-          <Link href={`/receipts/${latest.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
-            Receipt →
+          <Link href={`/receipts/${expensive.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+            Return receipt →
           </Link>
         </td>
       </tr>
@@ -107,7 +117,7 @@ function ReturnRow({ item }: { item: ItemHistory }) {
         <tr key={i} style={{background:'var(--cream)'}}>
           <td></td>
           <td style={{fontSize:12,color:'var(--ink2)',paddingLeft:12}}>
-            {i === 0 ? '↳ latest' : i === item.purchases.length - 1 ? '↳ first' : '↳ prev'}
+            {i === 0 ? '↳ current' : '↳ prev'}
           </td>
           <td colSpan={2} style={{fontSize:12,color:'var(--ink2)'}}>{p.store_name} · {fmt(p.purchase_date)}</td>
           <td style={{fontFamily:'var(--mono)',fontWeight:500,fontSize:12}}>{money(p.final_price)}</td>
@@ -272,7 +282,7 @@ function ItemsPageContent() {
           {!retLoading && returns.length > 0 && (
             <>
               <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
-                These items cost more now than your first purchase — consider returning and rebuying at the original price.
+                These items are cheaper now than a previous purchase. Bring the linked receipt to get a refund or rebuy at the lower price. Green days = likely within return window.
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -280,9 +290,9 @@ function ItemsPageContent() {
                     <tr>
                       <th>Code</th>
                       <th>Item</th>
-                      <th>First price</th>
-                      <th>Latest price</th>
-                      <th>Increase</th>
+                      <th>You paid</th>
+                      <th>Now</th>
+                      <th>Save</th>
                       <th></th>
                     </tr>
                   </thead>

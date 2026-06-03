@@ -89,6 +89,12 @@ export interface ItemHistory {
   max_price: number
   latest_price: number
   trend: 'up' | 'down' | 'stable' | 'single'
+  max_price_purchase?: {
+    receipt_id: string
+    purchase_date: string
+    store_name: string
+    final_price: number
+  }
 }
 
 export const BRAND_LABELS: Record<string, string> = {

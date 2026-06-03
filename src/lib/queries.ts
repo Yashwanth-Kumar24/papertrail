@@ -254,9 +254,11 @@ function groupHistory(rows: any[]): ItemHistory[] {
   const map = new Map<string, ItemHistory>()
 
   for (const row of rows) {
+    // Item code is the most reliable key (works across stores).
+    // Without a code, scope to same store to avoid cross-store false matches.
     const key = row.item_code
       ? `c:${row.item_code}`
-      : `n:${row.name.toUpperCase().trim()}`
+      : `s:${(row.store_name ?? '').toLowerCase().trim()}:n:${row.name.toUpperCase().trim()}`
 
     if (!map.has(key)) {
       map.set(key, {
@@ -284,7 +286,15 @@ function groupHistory(rows: any[]): ItemHistory[] {
     })
 
     if (row.final_price < e.min_price) e.min_price = row.final_price
-    if (row.final_price > e.max_price) e.max_price = row.final_price
+    if (row.final_price > e.max_price) {
+      e.max_price = row.final_price
+      e.max_price_purchase = {
+        receipt_id:    row.receipt_id,
+        purchase_date: row.purchase_date,
+        store_name:    row.store_name,
+        final_price:   row.final_price,
+      }
+    }
   }
 
   for (const e of map.values()) {
@@ -478,7 +488,9 @@ export async function getReturnCandidates(): Promise<import('./types').ItemHisto
     .limit(2000)
   if (error) throw new Error(error.message)
   const all = groupHistory(data ?? [])
+  // Show items where the most expensive past purchase costs more than the current price.
+  // These are return candidates: user can bring the expensive receipt and get a refund/rebuy.
   return all
-    .filter(i => i.trend === 'up')
-    .sort((a, b) => (b.latest_price - b.min_price) - (a.latest_price - a.min_price))
+    .filter(i => i.purchases.length > 1 && i.max_price > i.latest_price)
+    .sort((a, b) => (b.max_price - b.latest_price) - (a.max_price - a.latest_price))
 }
