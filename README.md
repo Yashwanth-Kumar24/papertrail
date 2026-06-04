@@ -23,44 +23,56 @@ A personal household receipt tracker — scan any store receipt, extract items w
 ### Scan
 - Take a photo or upload a receipt image from any store
 - Google Vision reads the image; OpenAI GPT-4o-mini extracts structured items, discounts, and totals
-- Review and edit every field before saving — store, location, date, time, total, tax, paid by, items
-- **Manual entry** — no receipt? Use "Lost a receipt? Add manually" to type everything in by hand
+- Review and edit every field before saving — store, location, date, time, total, tax, paid by, category, notes, items
+- **Category** — auto-suggested from the store brand (e.g. Costco → Groceries, CVS → Pharmacy); always editable
+- **Notes** — optional free-text field up to 280 characters (e.g. "birthday dinner", "work reimbursement")
+- **Manual entry** — no receipt? Tap "No receipt? Enter manually" to type everything in by hand
 - **Multi-section scanning** — long receipt? Scan in sections; items merge automatically with deduplication
 - **Paid by** — required on every receipt; tracks which household member paid
 
 ### Receipts
-- Browse all receipts in a card grid
-- Filter by store, date, payer, and source (Scanned / Manual / Costco Import) — all dropdowns coordinate
+- Browse all receipts in a card grid — store name, date, payer pill, category pill, savings, total
+- Filter by store, date, payer, source (Scanned / Manual / Costco Import), and **category** — all coordinated
 - **Sort** — Newest first / Oldest first / $ High→Low / $ Low→High
 - **Batch select** — check multiple receipts and delete them all at once (select across all pages)
 - Paginated (20 per page) with "Load more"
-- Savings shown in green on each card when the receipt has any discounts
 - Stats bar: total receipts, total spent, line items count, total saved
-- **Edit** any saved receipt — store, date, total, tax, paid by, and every line item
+- **Edit** any saved receipt — store, brand, date, total, tax, paid by, category, notes, and every line item
 
 ### Spending
-- Date range analytics with preset buttons (This week / This month / Last 3 months / This year / All time) and a custom date picker
-- Summary cards: total spent, receipt count, avg per trip, total saved via discounts
-- **By payer** bar chart (color-coded) showing each household member's spend and % of total
-- By-store bar chart, by-month bar chart
-- Full receipt list for the selected period with Paid by column and links to detail views
+Three sub-tabs, all respect the date range selector (This week / This month / Last 3 months / This year / All time):
+
+- **Summary** — key metrics (total spent, receipt count, avg per trip, total saved), top categories by spend, top 5 stores ranked, top 3 biggest receipts, payer split showing receipts + recurring payments side by side, recurring bills obligation card
+- **Analytics** — by-payer bars, by-store bars with trend arrows (↑/↓/→ vs prior period), by-month bars with year-over-year toggle (overlay last year's data), daily spending calendar heatmap (tap a day to see all receipts for that date)
+- **Budget** — set monthly dollar limits per category; master overview bar + per-category progress bars (green → amber at 75% → red at 100%); inline edit panel
+- **Monthly digest** — appears at the top of Spending in the first week of each new month; shows last month's total with delta, top 3 categories, biggest receipt; dismissible
 
 ### Items
 - Search any item by name, item code, or price across all receipts
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- **↑ Price alerts mode** — one tap shows all items where a past purchase is more expensive than the current price; sorted by savings, links directly to the return receipt. Works across all stores. Days since expensive purchase shown (green = likely within return window)
-- Back button from a receipt returns you to price alerts mode (not search)
-- Grouping: item code when available (reliable across stores); name-only items are scoped to the same store to prevent false cross-store matches
+- **↑ Price alerts mode** — one tap shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt; days since expensive purchase shown
+- Back button from a receipt detail returns to price alerts mode (not search)
+- Grouping: item code when available (reliable across stores); name-only items scoped to the same store
+
+### Recurring
+- Track rent, subscriptions, utilities — anything paid on a fixed schedule
+- Frequencies: monthly, annual, weekly, quarterly; set a due day or date per bill
+- **Paid cycle** — auto-resets when the next due date arrives; shows amber "Next due in 3d" warning 3 days before
+- **Mark as paid** — pick the date (allows backdating) and who paid this cycle; updates the payment log
+- **Undo** — tap the green check to un-mark and roll back the payment record
+- **Payment history** — full log of every payment per bill: who paid, when, how much; add past payments manually; delete individual entries
+- Analytics: by-category bar chart of monthly obligations + full breakdown table
+- Mobile: accessible from the bottom nav; Scan moves to a green floating action button above the nav
 
 ### Costco import
 - Accessible from the Receipts page header (blue Costco button)
 - Paste a Bearer token from browser DevTools: Network tab → any `graphql` request → `costco-x-authorization` header
 - Browse receipts by quarter (up to 10 quarters back); click any row to preview full item detail
 - Batch-select receipts and import in one click — already-saved receipts are skipped automatically
-- Return receipts (refunds) imported with negative totals and REFUND badge
-- Full warehouse address stored and displayed in proper case (e.g. `800 Heights Blvd, Florence, KY`)
-- Per-unit prices stored correctly even for multi-unit line items; instant savings merged as discounts
+- Return receipts (refunds) imported with negative totals and REFUND badge; excluded from price tracking
+- Full warehouse address stored in proper case (e.g. `800 Heights Blvd, Florence, KY`)
+- Per-unit prices stored correctly for multi-unit line items; instant savings merged as discounts
 - One push notification per import batch, not per receipt
 - Token lives in sessionStorage only — never written to the database
 
@@ -74,6 +86,7 @@ A personal household receipt tracker — scan any store receipt, extract items w
 
 ### Other
 - **Push notifications** — household members get a push notification when someone saves a new receipt (title, store, total)
+- **Monthly digest push** — sent in the first week of each month with last month's spending recap *(planned)*
 - **PWA** — installable on Android and iOS; runs fullscreen like a native app
 - **Favicon + app icon** — green receipt icon in browser tabs and on home screen
 
@@ -204,6 +217,7 @@ src/
     items/                 Item search, price history, price alerts
     needs/                 Shared household shopping list
     costco/                Costco direct import — browse by quarter, batch import
+    recurring/             Recurring bills — track, mark paid, payment history
     scan/                  Scan flow — capture, OCR, review, save, manual entry
     layout.tsx             Root layout — nav, metadata, PWA manifest link
     manifest.ts            PWA manifest
@@ -234,6 +248,9 @@ receipts:
   purchase_date, purchase_time, transaction_id,
   total, tax, paid_by,
   source,           -- 'scan' | 'manual' | 'costco_api'
+  category,         -- groceries | household | utilities | dining | entertainment |
+                    -- clothing | electronics | pharmacy | insurance | fuel | other
+  notes,            -- optional free-text up to 280 chars
   image_urls, raw_ocr_text, created_at
 
 receipt_items:
@@ -247,6 +264,17 @@ shopping_list:
 
 push_subscriptions:
   id, endpoint, auth, p256dh, user_name, created_at
+
+budgets:
+  id, category, amount, active, created_at, updated_at
+
+recurring:
+  id, name, amount, frequency,  -- monthly | annual | weekly | quarterly
+  due_day, due_date,
+  paid_by, category, notes, last_paid_at, active, created_at
+
+recurring_payments:
+  id, recurring_id, paid_by, paid_at, amount, created_at
 
 -- View used by item search and price alerts (excludes returned items):
 item_purchase_history (joins receipts + receipt_items where final_price >= 0)
@@ -386,7 +414,7 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 ```
 
 - Up to 6 members supported
-- Colors are assigned by position: green, purple, amber, blue, pink, red
+- Colors are assigned by position: green, pink, purple, blue, amber, red
 - No code changes needed — names never appear in the codebase
 - To rename a member in existing data, run the SQL in the Migration helpers section of `supabase/schema.sql`
 
