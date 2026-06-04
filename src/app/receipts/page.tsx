@@ -36,7 +36,7 @@ export default function ReceiptsPage() {
   const [totalCount,    setTotalCount]    = useState(0)
   const [offset,        setOffset]        = useState(0)
   const [loadingMore,   setLoadingMore]   = useState(false)
-  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null }[]>([])
+  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
   const [storeName,     setStoreName]     = useState('')
   const [date,          setDate]          = useState('')
@@ -76,40 +76,51 @@ export default function ReceiptsPage() {
 
   const availableStores = useMemo(() => {
     let src = allMeta
-    if (date)   src = src.filter(m => m.purchase_date === date)
-    if (paidBy) src = src.filter(m => m.paid_by === paidBy)
+    if (date)          src = src.filter(m => m.purchase_date === date)
+    if (paidBy)        src = src.filter(m => m.paid_by === paidBy)
+    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
+    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
     return [...new Set(src.map(m => m.store_name))].sort()
-  }, [allMeta, date, paidBy])
+  }, [allMeta, date, paidBy, sourceFilter, categoryFilter])
 
   const availableDates = useMemo(() => {
     let src = allMeta
-    if (storeName) src = src.filter(m => m.store_name === storeName)
-    if (paidBy)    src = src.filter(m => m.paid_by === paidBy)
+    if (storeName)     src = src.filter(m => m.store_name === storeName)
+    if (paidBy)        src = src.filter(m => m.paid_by === paidBy)
+    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
+    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
     return [...new Set(src.map(m => m.purchase_date))].sort().reverse()
-  }, [allMeta, storeName, paidBy])
+  }, [allMeta, storeName, paidBy, sourceFilter, categoryFilter])
 
   const availablePayers = useMemo(() => {
     let src = allMeta
-    if (storeName) src = src.filter(m => m.store_name === storeName)
-    if (date)      src = src.filter(m => m.purchase_date === date)
+    if (storeName)     src = src.filter(m => m.store_name === storeName)
+    if (date)          src = src.filter(m => m.purchase_date === date)
+    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
+    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
     return [...new Set(src.map(m => m.paid_by).filter(Boolean))].sort() as string[]
-  }, [allMeta, storeName, date])
+  }, [allMeta, storeName, date, sourceFilter, categoryFilter])
 
+  function applyStaticFilters(src: typeof allMeta) {
+    if (sourceFilter)   src = src.filter(m => m.source === sourceFilter)
+    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
+    return src
+  }
   function handleStoreChange(s: string) {
     setStoreName(s)
-    const sub = s ? allMeta.filter(m => m.store_name === s) : allMeta
+    const sub = applyStaticFilters(s ? allMeta.filter(m => m.store_name === s) : allMeta)
     if (date   && !sub.some(m => m.purchase_date === date))   setDate('')
     if (paidBy && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
   }
   function handleDateChange(d: string) {
     setDate(d)
-    const sub = d ? allMeta.filter(m => m.purchase_date === d) : allMeta
+    const sub = applyStaticFilters(d ? allMeta.filter(m => m.purchase_date === d) : allMeta)
     if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
     if (paidBy    && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
   }
   function handlePayerChange(p: string) {
     setPaidBy(p)
-    const sub = p ? allMeta.filter(m => m.paid_by === p) : allMeta
+    const sub = applyStaticFilters(p ? allMeta.filter(m => m.paid_by === p) : allMeta)
     if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
     if (date      && !sub.some(m => m.purchase_date === date))   setDate('')
   }

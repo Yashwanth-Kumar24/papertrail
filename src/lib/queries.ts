@@ -153,12 +153,12 @@ export async function getReceiptById(id: string): Promise<Receipt | null> {
   return data as Receipt
 }
 
-// ── Get store_name+date+paid_by for coordinated filter dropdowns ──
-export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string; paid_by: string | null }[]> {
+// ── Get store_name+date+paid_by+source+category for coordinated filter dropdowns ──
+export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]> {
   const { data } = await supabase
     .from('receipts')
-    .select('store_name, purchase_date, paid_by')
-  return (data ?? []) as { store_name: string; purchase_date: string; paid_by: string | null }[]
+    .select('store_name, purchase_date, paid_by, source, category')
+  return (data ?? []) as { store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
