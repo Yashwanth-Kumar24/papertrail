@@ -28,7 +28,7 @@ export default function ListPage() {
     const text = newText.trim()
     if (!text) return
     const temp: ShoppingItem = {
-      id: `tmp-${Date.now()}`, text, added_by: newPayer,
+      id: `tmp-${crypto.randomUUID()}`, text, added_by: newPayer,
       done: false, created_at: new Date().toISOString(),
     }
     setItems(prev => [temp, ...prev])
