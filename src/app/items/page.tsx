@@ -33,14 +33,11 @@ function ItemRow({ item }: { item: ItemHistory }) {
           {latest.store_name}<br/>
           <span style={{fontSize:11}}>{fmt(latest.purchase_date)}</span>
         </td>
-        <td style={{textAlign:'right',fontFamily:'var(--mono)', color: latest.discount_amount > 0 ? 'var(--ink2)' : 'inherit', textDecoration: latest.discount_amount > 0 ? 'line-through' : 'none'}}>
-          {latest.discount_amount > 0 ? money(latest.original_price) : '—'}
-        </td>
-        <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--red)',fontWeight:600}}>
-          {latest.discount_amount > 0 ? `−${money(latest.discount_amount)}` : '—'}
-        </td>
         <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600}}>
           {money(latest.final_price)}
+        </td>
+        <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--green)',fontWeight:600}}>
+          {latest.discount_amount > 0 ? `−${money(latest.discount_amount)}` : <span style={{color:'var(--ink3)',fontWeight:400}}>—</span>}
         </td>
         <td><TrendBadge trend={item.trend} min={item.min_price} max={item.max_price} latestPrice={item.latest_price}/></td>
         <td>
@@ -54,13 +51,10 @@ function ItemRow({ item }: { item: ItemHistory }) {
           <td></td>
           <td style={{fontSize:12,color:'var(--ink2)',paddingLeft:12}}>↳ prev purchase</td>
           <td style={{fontSize:12,color:'var(--ink2)'}}>{p.store_name}<br/><span style={{fontSize:11}}>{fmt(p.purchase_date)}</span></td>
-          <td style={{textAlign:'right',fontFamily:'var(--mono)',fontSize:12,color:'var(--ink3)',textDecoration: p.discount_amount > 0 ? 'line-through' : 'none'}}>
-            {p.discount_amount > 0 ? money(p.original_price) : '—'}
-          </td>
-          <td style={{textAlign:'right',fontFamily:'var(--mono)',fontSize:12,color:'var(--red)'}}>
-            {p.discount_amount > 0 ? `−${money(p.discount_amount)}` : '—'}
-          </td>
           <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:500,fontSize:12}}>{money(p.final_price)}</td>
+          <td style={{textAlign:'right',fontFamily:'var(--mono)',fontSize:12,color:'var(--green)'}}>
+            {p.discount_amount > 0 ? `−${money(p.discount_amount)}` : <span style={{color:'var(--ink3)'}}>—</span>}
+          </td>
           <td></td>
           <td>
             <Link href={`/receipts/${p.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
@@ -157,8 +151,19 @@ function ItemsPageContent() {
     if (q) { setQuery(q); run(q) }
   }, [searchParams, run])
 
+  // Restore price alerts mode when navigating back from a receipt
+  useEffect(() => {
+    if (searchParams.get('mode') === 'returns') {
+      setMode('returns')
+      setRetLoading(true)
+      getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // run once on mount only
+
   function enterReturns() {
     setMode('returns')
+    router.replace('/items?mode=returns')
     if (returns.length > 0) return
     setRetLoading(true)
     getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
@@ -176,7 +181,7 @@ function ItemsPageContent() {
       {/* Mode toggle */}
       <div style={{display:'flex',gap:8,marginBottom:16}}>
         <button
-          onClick={() => setMode('search')}
+          onClick={() => { setMode('search'); router.replace(query ? `/items?q=${encodeURIComponent(query)}` : '/items') }}
           style={{
             fontSize:13,padding:'6px 16px',borderRadius:999,border:'1px solid var(--border2)',
             background: mode === 'search' ? 'var(--green)' : 'transparent',
@@ -248,9 +253,8 @@ function ItemsPageContent() {
                 <thead>
                   <tr>
                     <th>Code</th><th>Item</th><th>Store · Date</th>
-                    <th style={{textAlign:'right'}}>Original</th>
-                    <th style={{textAlign:'right'}}>Discount</th>
                     <th style={{textAlign:'right'}}>Paid</th>
+                    <th style={{textAlign:'right'}}>Saved</th>
                     <th>Trend</th><th></th>
                   </tr>
                 </thead>

@@ -87,16 +87,22 @@ Walmart/other discounts appear as:
 
 CRITICAL: Never list a discount as a separate item. Always:
 1. Find the item the discount applies to
-2. Set discount_amount on that item
-3. Set final_price = original_price - discount_amount
+2. Set discount_amount = per-unit discount (divide total discount by quantity if multi-unit)
+3. Set final_price = original_price - discount_amount (both per unit)
 4. final_price is NEVER negative — minimum is 0.00
 5. If discount > original_price, set final_price to 0.00 and discount_amount to original_price
 
 ══════════════════════════════════════════
 QUANTITY AND WEIGHT ITEMS
 ══════════════════════════════════════════
-Multi-quantity: "2 @ 3.99" or "BANANAS 2 EA 1.29" → quantity:2, original_price per unit, final_price = quantity × price
-Weight-based: "BEEF 1.23 lb @ 5.99/lb" → quantity:1, final_price = total charged amount
+IMPORTANT: Always store PER-UNIT prices. The app multiplies by quantity to show the line total.
+
+Multi-quantity: "2 @ 3.99" or "2 BANANAS 1.29 EA"
+  → quantity:2, original_price:3.99 (per unit), final_price:3.99 (per unit after any discount)
+
+Weight-based: "BEEF 1.23 lb @ 5.99/lb = 7.37"
+  → quantity:1, original_price:7.37, final_price:7.37 (total charged — weight items have no meaningful unit)
+
 If quantity unclear → default to 1
 
 ══════════════════════════════════════════

@@ -32,6 +32,7 @@ type EditItem = {
   original_price: number
   discount_amount: number
   final_price: number
+  quantity: number
 }
 
 function toEditItem(i: ReceiptItem): EditItem {
@@ -41,6 +42,7 @@ function toEditItem(i: ReceiptItem): EditItem {
     original_price:  i.original_price,
     discount_amount: i.discount_amount,
     final_price:     i.final_price,
+    quantity:        i.quantity ?? 1,
   }
 }
 
@@ -139,7 +141,7 @@ export default function ReceiptDetail() {
 
   function removeEditItem(idx: number) { setEditItems(prev => prev.filter((_, i) => i !== idx)) }
   function addEditItem() {
-    setEditItems(prev => [...prev, { item_code:'', name:'', original_price:0, discount_amount:0, final_price:0 }])
+    setEditItems(prev => [...prev, { item_code:'', name:'', original_price:0, discount_amount:0, final_price:0, quantity:1 }])
   }
 
   async function handleDelete() {
@@ -159,6 +161,15 @@ export default function ReceiptDetail() {
 
   const items      = receipt.receipt_items ?? []
   const discounted = items.filter(i => i.discount_amount > 0)
+  const isReturn = Number(receipt.total) < 0
+  const hasQty   = items.some(i => i.quantity !== 1)
+
+  const SOURCE_BADGE: Record<string, { label: string; bg: string; color: string }> = {
+    scan:       { label: 'Scanned',       bg: '#E8F5EF', color: '#1D6F50' },
+    manual:     { label: 'Manual Entry',  bg: 'var(--cream2)', color: 'var(--ink2)' },
+    costco_api: { label: 'Costco Import', bg: '#E8F0F8', color: '#005DAA' },
+  }
+  const sourceBadge = SOURCE_BADGE[receipt.source] ?? null
 
   return (
     <main className="page">
@@ -203,6 +214,13 @@ export default function ReceiptDetail() {
           )}
         </div>
       </div>
+
+      {/* Return receipt banner */}
+      {isReturn && !editing && (
+        <div style={{padding:'10px 14px',background:'#FEF3C7',color:'#92400E',borderRadius:'var(--r)',fontSize:13,fontWeight:500,marginBottom:12}}>
+          ↩ Return Receipt — ${Math.abs(Number(receipt.total)).toFixed(2)} refunded to Costco
+        </div>
+      )}
 
       {editErr && (
         <div style={{padding:'8px 14px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:13,marginBottom:12}}>
@@ -259,7 +277,14 @@ export default function ReceiptDetail() {
             </>
           ) : (
             <>
-              <h2>{receipt.store_name}</h2>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:12}}>
+                <h2 style={{margin:0}}>{receipt.store_name}</h2>
+                {sourceBadge && (
+                  <span style={{fontSize:10,fontWeight:600,background:sourceBadge.bg,color:sourceBadge.color,padding:'3px 8px',borderRadius:999,flexShrink:0,whiteSpace:'nowrap',border:`1px solid ${sourceBadge.color}22`}}>
+                    {sourceBadge.label}
+                  </span>
+                )}
+              </div>
               {receipt.location && (
                 <div className="meta-row">
                   <span className="meta-label">Location</span>
@@ -282,10 +307,10 @@ export default function ReceiptDetail() {
                   </span>
                 </div>
               )}
-              {receipt.tax != null && receipt.tax > 0 && (
+              {receipt.tax != null && receipt.tax !== 0 && (
                 <div className="meta-row">
                   <span className="meta-label">Tax</span>
-                  <span className="meta-val">{money(receipt.tax)}</span>
+                  <span className="meta-val" style={{color:Number(receipt.tax)<0?'var(--red-tx)':'inherit'}}>{money(Math.abs(Number(receipt.tax)))}</span>
                 </div>
               )}
               {receipt.paid_by && (
@@ -300,7 +325,12 @@ export default function ReceiptDetail() {
                   </span>
                 </div>
               )}
-              <div className="meta-row"><span className="meta-label">Total</span><span className="meta-val">{money(receipt.total)}</span></div>
+              <div className="meta-row">
+                <span className="meta-label">Total</span>
+                <span className="meta-val" style={{color:isReturn?'var(--red-tx)':'inherit'}}>
+                  {isReturn ? `−${money(Math.abs(Number(receipt.total)))}` : money(receipt.total)}
+                </span>
+              </div>
             </>
           )}
         </div>
@@ -363,27 +393,54 @@ export default function ReceiptDetail() {
                 <tr>
                   <th>Code</th>
                   <th>Item</th>
+                  {hasQty && <th style={{textAlign:'right'}}>Qty</th>}
                   <th style={{textAlign:'right'}}>Original</th>
                   <th style={{textAlign:'right'}}>Discount</th>
                   <th style={{textAlign:'right'}}>Paid</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map(item => (
-                  <tr key={item.id} className={item.discount_amount > 0 ? 'disc-row' : ''}>
-                    <td><span className="code-badge">{item.item_code ?? '—'}</span></td>
-                    <td style={{fontWeight: item.discount_amount > 0 ? 500 : 400}}>{item.name}</td>
-                    <td style={{textAlign:'right',fontFamily:'var(--mono)',color:item.discount_amount > 0 ? 'var(--ink2)':'inherit',textDecoration:item.discount_amount > 0 ? 'line-through':'none'}}>
-                      {money(item.original_price)}
-                    </td>
-                    <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--red)',fontWeight:item.discount_amount > 0 ? 600:400}}>
-                      {item.discount_amount > 0 ? `−${money(item.discount_amount)}` : '—'}
-                    </td>
-                    <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600,color:item.discount_amount > 0 ? 'var(--green)':'inherit'}}>
-                      {money(item.final_price)}
-                    </td>
-                  </tr>
-                ))}
+                {items.map(item => {
+                  const returned = item.final_price < 0
+                  const adj      = isReturn && item.final_price > 0  // coupon reversal on a return receipt
+                  return (
+                    <tr key={item.id}
+                      className={item.discount_amount > 0 ? 'disc-row' : ''}
+                      style={{opacity: adj ? 0.55 : 1}}
+                    >
+                      <td><span className="code-badge">{item.item_code ?? '—'}</span></td>
+                      <td>
+                        <div style={{fontWeight: item.discount_amount > 0 ? 500 : 400, color: returned ? 'var(--red-tx)' : 'inherit'}}>
+                          {item.name}
+                        </div>
+                        {returned && <div style={{fontSize:10,fontWeight:700,color:'var(--red-tx)',marginTop:2}}>RETURNED</div>}
+                        {adj      && <div style={{fontSize:10,color:'var(--ink3)',marginTop:1}}>adjustment</div>}
+                      </td>
+                      {hasQty && (
+                        <td style={{textAlign:'right',fontFamily:'var(--mono)',color:returned?'var(--red-tx)':'inherit'}}>
+                          {item.quantity}
+                        </td>
+                      )}
+                      <td style={{textAlign:'right',fontFamily:'var(--mono)',color:item.discount_amount > 0 ? 'var(--ink2)':'inherit',textDecoration:item.discount_amount > 0 ? 'line-through':'none'}}>
+                        {money(item.original_price)}
+                      </td>
+                      <td style={{textAlign:'right',fontFamily:'var(--mono)',color:'var(--red)',fontWeight:item.discount_amount > 0 ? 600:400}}>
+                        {item.discount_amount > 0 ? `−${money(item.discount_amount)}` : '—'}
+                      </td>
+                      <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600,color:returned?'var(--red-tx)':item.discount_amount > 0 ? 'var(--green)':'inherit'}}>
+                        {returned
+                          ? `−${money(Math.abs(item.final_price))}`
+                          : money(item.final_price)}
+                        {/* Show line total when quantity > 1 (e.g. 3 × $5.49 = $16.47) */}
+                        {item.quantity > 1 && item.final_price > 0 && (
+                          <div style={{fontSize:10,fontWeight:400,color:'var(--ink3)',marginTop:2}}>
+                            ×{item.quantity} = {money(item.final_price * item.quantity)}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}

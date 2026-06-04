@@ -8,7 +8,7 @@ export default function ListPage() {
   const [items,    setItems]    = useState<ShoppingItem[]>([])
   const [loading,  setLoading]  = useState(true)
   const [newText,  setNewText]  = useState('')
-  const [newPayer, setNewPayer] = useState<string>(PAYERS[0])
+  const [newPayer, setNewPayer] = useState<string>(PAYERS[0] ?? '')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {

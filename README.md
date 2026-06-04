@@ -1,8 +1,21 @@
 # PaperTrail
 
-A personal receipt tracker — scan any store receipt, extract items with AI, search your purchase history, and track spending over time. Built for household use with a focus on Costco returns and price tracking.
+A personal household receipt tracker — scan any store receipt, extract items with AI, search your purchase history, and track spending over time. Built for Costco returns and price tracking.
 
 **Live:** [papertrail-home.vercel.app](https://papertrail-home.vercel.app)
+
+---
+
+## Versions at a glance
+
+| Version | Stage | What shipped |
+|---|---|---|
+| **v1.0** | AI Core | OCR + GPT-4o-mini parsing, spending analytics, brand normalization |
+| **v1.1** | Household | Paid by, Needs list, PWA, push notifications, price alerts, receipt editing, batch delete |
+| **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field, back-button fix for price alerts |
+| **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(planned)* |
+
+---
 
 ## What it does
 
@@ -16,11 +29,13 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 
 ### Receipts
 - Browse all receipts in a card grid
-- Filter by store, date, and payer — all three dropdowns coordinate with each other
+- Filter by store, date, payer, and source (Scanned / Manual / Costco Import) — all dropdowns coordinate
 - **Sort** — Newest first / Oldest first / $ High→Low / $ Low→High
-- **Batch select** — check multiple receipts and delete them all at once
+- **Batch select** — check multiple receipts and delete them all at once (select across all pages)
 - Paginated (20 per page) with "Load more"
+- Savings shown in green on each card when the receipt has any discounts
 - Stats bar: total receipts, total spent, line items count, total saved
+- **Edit** any saved receipt — store, date, total, tax, paid by, and every line item
 
 ### Spending
 - Date range analytics with preset buttons (This week / This month / Last 3 months / This year / All time) and a custom date picker
@@ -34,7 +49,19 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
 - **↑ Price alerts mode** — one tap shows all items where a past purchase is more expensive than the current price; sorted by savings, links directly to the return receipt. Works across all stores. Days since expensive purchase shown (green = likely within return window)
+- Back button from a receipt returns you to price alerts mode (not search)
 - Grouping: item code when available (reliable across stores); name-only items are scoped to the same store to prevent false cross-store matches
+
+### Costco import
+- Accessible from the Receipts page header (blue Costco button)
+- Paste a Bearer token from browser DevTools: Network tab → any `graphql` request → `costco-x-authorization` header
+- Browse receipts by quarter (up to 10 quarters back); click any row to preview full item detail
+- Batch-select receipts and import in one click — already-saved receipts are skipped automatically
+- Return receipts (refunds) imported with negative totals and REFUND badge
+- Full warehouse address stored and displayed in proper case (e.g. `800 Heights Blvd, Florence, KY`)
+- Per-unit prices stored correctly even for multi-unit line items; instant savings merged as discounts
+- One push notification per import batch, not per receipt
+- Token lives in sessionStorage only — never written to the database
 
 ### Needs
 - Shared household shopping list synced via Supabase
@@ -45,10 +72,9 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 - List re-syncs whenever the browser tab regains focus
 
 ### Other
-- **Delete** — remove receipts from the list or detail view with confirmation
 - **Push notifications** — household members get a push notification when someone saves a new receipt (title, store, total)
 - **PWA** — installable on Android and iOS; runs fullscreen like a native app
-- **Favicon + app icon** — green receipt icon shown in browser tabs and on home screen
+- **Favicon + app icon** — green receipt icon in browser tabs and on home screen
 
 ---
 
@@ -62,7 +88,7 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 | OCR | Google Cloud Vision API (server-side) |
 | AI parsing | OpenAI GPT-4o-mini (server-side) |
 | Database | Supabase Postgres |
-| Storage | Supabase Storage (optional receipt images) |
+| Storage | Supabase Storage (receipt images) |
 | Hosting | Vercel |
 | Mobile | PWA — installable on Android + iOS |
 
@@ -86,11 +112,16 @@ OPENAI_API_KEY=sk-...
 GOOGLE_VISION_API_KEY=AIza...
 
 NEXT_PUBLIC_USE_GOOGLE_OCR=true
-NEXT_PUBLIC_USE_AI_PARSER=true
+
+# Household members — comma-separated, up to 6, order sets pill color
+NEXT_PUBLIC_PAYERS=Name1,Name2,Name3
+
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:you@example.com
 ```
 
-Set `NEXT_PUBLIC_USE_GOOGLE_OCR=false` to fall back to Tesseract.js (free, runs in browser, less accurate).  
-Set `NEXT_PUBLIC_USE_AI_PARSER=false` to skip AI parsing and get raw OCR text only.
+Set `NEXT_PUBLIC_USE_GOOGLE_OCR=false` to fall back to Tesseract.js (free, runs in browser, less accurate).
 
 **3. Supabase setup**
 - Run `supabase/schema.sql` in the Supabase SQL editor
@@ -114,6 +145,11 @@ OpenAI API:
 - Go to `platform.openai.com`
 - API keys → Create new key
 - Add $5 credit (lasts months at household usage)
+
+VAPID keys (for push notifications):
+```
+npx web-push generate-vapid-keys
+```
 
 **5. Run locally**
 ```
@@ -141,7 +177,10 @@ Add these in Vercel → Project → Settings → Environment Variables:
 | `OPENAI_API_KEY` | your OpenAI key | Production + Preview |
 | `GOOGLE_VISION_API_KEY` | your Google key | Production + Preview |
 | `NEXT_PUBLIC_USE_GOOGLE_OCR` | `true` | All |
-| `NEXT_PUBLIC_USE_AI_PARSER` | `true` | All |
+| `NEXT_PUBLIC_PAYERS` | `Name1,Name2,Name3` | All |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | your VAPID public key | All |
+| `VAPID_PRIVATE_KEY` | your VAPID private key | Production + Preview |
+| `VAPID_SUBJECT` | `mailto:you@example.com` | All |
 
 Redeploy once after adding env vars. Future deploys are automatic on every `git push`.
 
@@ -157,11 +196,13 @@ src/
       parse/route.ts       Server route — OpenAI parsing
       notify/route.ts      Server route — send push notifications to subscribers
       subscribe/route.ts   Server route — register push notification subscriptions
-    sw/route.ts            Service worker — handles push notifications for PWA
-    receipts/              Receipt list + [id] detail page
+      costco/route.ts      Server route — Costco GraphQL API proxy (token forwarding)
+    sw/route.ts            Service worker — handles push events for PWA
+    receipts/              Receipt list + [id] detail + edit
     spending/              Spending analytics with date range
-    items/                 Item search with price history and return flags
+    items/                 Item search, price history, price alerts
     needs/                 Shared household shopping list
+    costco/                Costco direct import — browse by quarter, batch import
     scan/                  Scan flow — capture, OCR, review, save, manual entry
     layout.tsx             Root layout — nav, metadata, PWA manifest link
     manifest.ts            PWA manifest
@@ -190,23 +231,29 @@ supabase/
 receipts:
   id, brand, store_name, location,
   purchase_date, purchase_time, transaction_id,
-  total, tax, paid_by, image_urls, raw_ocr_text, created_at
+  total, tax, paid_by,
+  source,           -- 'scan' | 'manual' | 'costco_api'
+  image_urls, raw_ocr_text, created_at
 
 receipt_items:
   id, receipt_id, item_code, name,
   original_price, discount_amount, final_price,
+  quantity,         -- -1=returned, 1=default, >1=multi-unit
   sort_order, created_at
 
 shopping_list:
   id, text, added_by, done, done_at, created_at
 
--- View used by item search:
-item_purchase_history (joins receipts + receipt_items)
+push_subscriptions:
+  id, endpoint, auth, p256dh, user_name, created_at
+
+-- View used by item search and price alerts (excludes returned items):
+item_purchase_history (joins receipts + receipt_items where final_price >= 0)
 ```
 
 `brand` is a normalized key (`costco`, `walmart`, `whole-foods`, `ross`, `target`, `safeway`, `trader-joes`, `kroger`, `cvs`, `walgreens`, `aldi`, `home-depot`, `lowes`, `other`). Unknown stores fall through to `other` and display by exact name.
 
-`paid_by` stores the household member who paid (e.g. `Yash`, `Alekhya`, `Pavan`).
+`paid_by` stores the household member who paid. Values come from the `NEXT_PUBLIC_PAYERS` env var.
 
 ### Duplicate prevention
 
@@ -238,9 +285,9 @@ Fallback: if `NEXT_PUBLIC_USE_GOOGLE_OCR=false`, Tesseract.js runs in the browse
 
 ## Paid by
 
-Each receipt requires a payer selected from a fixed household list (`Yash`, `Alekhya`, `Pavan`). To change names, update the `PAYERS` constant and the `PAYER_COLORS` map in `src/lib/types.ts`.
+Each receipt requires a payer selected from your household list. Members are configured via the `NEXT_PUBLIC_PAYERS` environment variable — no code changes needed.
 
-On first use, backfill existing receipts:
+On first use, backfill any receipts with a null `paid_by`:
 ```sql
 UPDATE receipts SET paid_by = 'YourName' WHERE paid_by IS NULL;
 ```
@@ -259,7 +306,7 @@ For long receipts (e.g. a full Costco run):
 
 ## Batch delete
 
-On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. Includes storage image cleanup.
+On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. "Select all" fetches IDs across all pages, not just the current 20. Includes storage image cleanup.
 
 ---
 
@@ -274,17 +321,11 @@ Implemented via the Web Push API. Subscriptions are stored in Supabase. Server-s
 ## Needs — shared shopping list
 
 The Needs tab is a shared household list synced via Supabase:
-- Add items with your name (Yash / Alekhya / Pavan) — color-coded pills
+- Add items tagged with your name (from `NEXT_PUBLIC_PAYERS`) — color-coded pills
 - Tap the circle to mark done — item moves to a "Done" section
 - Done items auto-clear after **2 hours** (configurable via `DONE_VISIBLE_HOURS` in `src/lib/queries.ts`)
 - Tap a done item's green check to undo
 - List re-syncs whenever the browser tab regains focus
-
-To change the auto-clear window, edit one constant:
-```ts
-// src/lib/queries.ts
-const DONE_VISIBLE_HOURS = 2
-```
 
 ---
 
@@ -337,13 +378,75 @@ Brand normalization ensures consistent filtering for known chains. Unknown store
 
 ## Household members (payers)
 
-Default: `Yash`, `Alekhya`, `Pavan`. To change, edit `PAYERS` and `PAYER_COLORS` in `src/lib/types.ts`. No database migration needed.
+Set the `NEXT_PUBLIC_PAYERS` environment variable to a comma-separated list of names:
+
+```
+NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
+```
+
+- Up to 6 members supported
+- Colors are assigned by position: green, purple, amber, blue, pink, red
+- No code changes needed — names never appear in the codebase
+- To rename a member in existing data, run the SQL in the Migration helpers section of `supabase/schema.sql`
 
 ---
 
-## Stage 2 planned
+## Release history
 
-- Multi-user support with auth
+### v1.0 — AI Core
+*First real version. Manual/basic parsing (pre-v1.0) is not tagged.*
+
+- OpenAI GPT-4o-mini parsing — extracts items, discounts, totals from raw OCR text
+- Google Cloud Vision OCR replacing browser-based Tesseract
+- Spending analytics page with by-store breakdown
+- Brand normalization (`costco`, `walmart`, `whole-foods`, etc.)
+- Schema simplification — single receipts + receipt_items structure
+- Multiple receipt images per scan
+
+---
+
+### v1.1 — Household Features
+*The app becomes a full household tool.*
+
+- **Paid by** — required payer field on every receipt; color-coded by household member
+- **Manual entry** — add a receipt without scanning (for lost/digital receipts)
+- **Needs list** — shared household shopping list, synced via Supabase, tab-focus refresh
+- **PWA** — installable on Android and iOS; fullscreen, home screen icon, favicon
+- **Push notifications** — Web Push API; all devices notified when any member saves a receipt
+- **Price alerts** — Items tab mode showing where current price is lower than a past purchase; sorted by savings opportunity, links to the return receipt
+- **Receipt editing** — edit store, date, tax, paid by, and every line item after saving
+- **Sort** — Newest / Oldest / $ High→Low / $ Low→High on Receipts page
+- **Spending by payer** — color-coded bar chart on Spending page
+- **Batch delete** — select multiple receipts (across all pages) and delete at once
+- Tax field, duplicate detection overhaul, coordinated filter dropdowns
+
+---
+
+### v1.2 — Costco Import + UI Polish
+*Direct import from Costco's internal API — no scanning needed for warehouse receipts.*
+
+- **Costco direct import** — browse receipts by quarter (up to 10 quarters back), preview full item detail, batch-select and import in one click
+- **Return receipts** — negative-total receipts handled throughout; REFUND badge; return items excluded from price tracking
+- **Source tracking** — every receipt tagged `scan` / `manual` / `costco_api`; filterable on Receipts page; badge on detail view
+- **Quantity field** — multi-unit purchases store per-unit price; line total (`×qty = total`) shown on detail view
+- **Per-unit price normalization** — Costco API and OCR-scanned multi-unit items both stored at unit price for accurate cross-purchase price comparison
+- **AI parser quantity fix** — quantity extracted by AI is now saved correctly; multi-quantity discounts stored per-unit
+- **Price alerts back-button fix** — navigating to a receipt and pressing back returns to price alerts mode, not search
+- **Savings on receipt cards** — green "Saved $X.XX" shown on each card when the receipt has any discounts
+- **Costco full address** — full warehouse address stored in proper case (`800 Heights Blvd, Florence, KY`)
+- **Env-driven household members** — names and colors fully configured via `NEXT_PUBLIC_PAYERS`; no names in code
+- **Items table simplified** — Original + Discount columns merged into a single "Saved" column
+- **Txn ID removed from cards and spending table** — internal data; still visible on receipt detail view
+- **Costco selection UI** — count + Clear inline, blue import action bar; selection clears automatically after import
+- Token lives in sessionStorage only, never written to the database
+
+---
+
+## v2.0 — Planned
+
+- Multi-user support with auth (Supabase Auth or Clerk)
 - Bring Your Own Key (BYOK) for OpenAI and Google Vision
 - Docker Compose for self-hosting
 - Excel export (.xlsx) — summary sheet + one sheet per receipt with full item detail and image link
+- Dedicated return tracker view (receipt + current price side by side)
+- Costco token auto-refresh (no manual DevTools copy)

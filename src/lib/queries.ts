@@ -44,6 +44,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       total:          parsed.total          ?? 0,
       tax:            parsed.tax            ?? null,
       paid_by:        parsed.paid_by        ?? null,
+      source:         parsed.source         ?? 'scan',
       raw_ocr_text:   parsed.raw_ocr_text,
     })
     .select('id')
@@ -58,6 +59,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
     original_price:  li.original_price,
     discount_amount: li.discount_amount,
     final_price:     li.final_price,
+    quantity:        li.quantity        ?? 1,
     sort_order:      li.sort_order,
   }))
 
@@ -101,15 +103,17 @@ export async function getReceipts(
   paidBy?: string,
   offset = 0,
   sortBy: ReceiptSort = 'date_desc',
+  source?: string,
 ): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
-    .select('*, receipt_items(count)', { count: 'exact' })
+    .select('*, receipt_items(discount_amount)', { count: 'exact' })
     .range(offset, offset + PAGE_SIZE - 1)
 
   if (storeName) q = q.eq('store_name', storeName)
   if (date)      q = q.eq('purchase_date', date)
   if (paidBy)    q = q.eq('paid_by', paidBy)
+  if (source)    q = q.eq('source', source)
 
   if (sortBy === 'date_desc')  q = q.order('purchase_date', { ascending: false }).order('created_at', { ascending: false })
   if (sortBy === 'date_asc')   q = q.order('purchase_date', { ascending: true  }).order('created_at', { ascending: true  })
@@ -121,7 +125,8 @@ export async function getReceipts(
 
   const mapped = (data ?? []).map(({ receipt_items, ...r }: any) => ({
     ...r,
-    itemCount: receipt_items?.[0]?.count ?? 0,
+    itemCount:     (receipt_items ?? []).length,
+    totalSavings:  (receipt_items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount ?? 0), 0),
   })) as Receipt[]
 
   return { data: mapped, totalCount: count ?? 0 }
@@ -153,11 +158,12 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
-export async function getStats(storeName?: string, date?: string, paidBy?: string) {
+export async function getStats(storeName?: string, date?: string, paidBy?: string, source?: string) {
   let rq = supabase.from('receipts').select('id, total')
   if (storeName) rq = rq.eq('store_name', storeName)
   if (date)      rq = rq.eq('purchase_date', date)
   if (paidBy)    rq = rq.eq('paid_by', paidBy)
+  if (source)    rq = rq.eq('source', source)
   const { data: recs } = await rq
 
   const ids    = (recs ?? []).map((r: any) => r.id)
@@ -254,6 +260,9 @@ function groupHistory(rows: any[]): ItemHistory[] {
   const map = new Map<string, ItemHistory>()
 
   for (const row of rows) {
+    // Skip returned items — negative final_price corrupts price trend analysis
+    if (Number(row.final_price) < 0) continue
+
     // Item code is the most reliable key (works across stores).
     // Without a code, scope to same store to avoid cross-store false matches.
     const key = row.item_code
@@ -439,6 +448,23 @@ export async function clearDoneItems(): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// ── Get all receipt IDs matching current filter (for select-all across pages) ─
+export async function getAllReceiptIds(
+  storeName?: string,
+  date?: string,
+  paidBy?: string,
+  source?: string,
+): Promise<string[]> {
+  let q = supabase.from('receipts').select('id')
+  if (storeName) q = q.eq('store_name', storeName)
+  if (date)      q = q.eq('purchase_date', date)
+  if (paidBy)    q = q.eq('paid_by', paidBy)
+  if (source)    q = q.eq('source', source)
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((r: any) => r.id)
+}
+
 // ── Update receipt header fields ───────────────────────────
 export async function updateReceipt(id: string, data: {
   brand: string
@@ -469,7 +495,7 @@ export async function updateReceipt(id: string, data: {
 // ── Replace all items on a receipt (delete + re-insert) ────
 export async function replaceReceiptItems(
   receiptId: string,
-  items: { item_code?: string; name: string; original_price: number; discount_amount: number; final_price: number }[],
+  items: { item_code?: string; name: string; original_price: number; discount_amount: number; final_price: number; quantity?: number }[],
 ): Promise<void> {
   const { error: delErr } = await supabase.from('receipt_items').delete().eq('receipt_id', receiptId)
   if (delErr) throw new Error(delErr.message)
@@ -481,6 +507,7 @@ export async function replaceReceiptItems(
     original_price:  item.original_price,
     discount_amount: item.discount_amount,
     final_price:     item.final_price,
+    quantity:        item.quantity ?? 1,
     sort_order:      i,
   }))
   const { error: insErr } = await supabase.from('receipt_items').insert(rows)

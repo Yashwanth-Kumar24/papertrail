@@ -165,6 +165,7 @@ export default function ScanPage() {
         total:         editTotal !== '' ? (parseFloat(editTotal) || 0) : (parsed.total ?? 0),
         tax:           editTax  !== '' ? (parseFloat(editTax)  || 0) : parsed.tax,
         paid_by:       editPaidBy,
+        source:        manualMode ? 'manual' : 'scan',
         line_items:    items,
         store: {
           ...parsed.store,
@@ -304,14 +305,17 @@ export default function ScanPage() {
               </div>
 
               <button onClick={startManual} style={{
-                marginTop:10,width:'100%',background:'none',
-                border:'1px dashed var(--border2)',borderRadius:'var(--r)',
-                padding:'11px 16px',fontSize:13,color:'var(--ink2)',
+                marginTop:10,width:'100%',
+                background:'var(--cream2)',
+                border:'1px solid var(--border2)',
+                borderRadius:'var(--r)',
+                padding:'11px 16px',fontSize:13,
+                color:'var(--ink)',fontWeight:500,
                 cursor:'pointer',fontFamily:'var(--sans)',
                 display:'flex',alignItems:'center',justifyContent:'center',gap:8,
               }}>
-                <span>🧾</span>
-                <span>Lost a receipt? Add manually</span>
+                <span>✏️</span>
+                <span>No receipt? Enter manually</span>
               </button>
             </>
           )}

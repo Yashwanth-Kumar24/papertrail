@@ -221,7 +221,6 @@ export default function SpendingPage() {
                   <th>Store</th>
                   <th>Date</th>
                   <th>Paid by</th>
-                  <th>Txn ID</th>
                   <th style={{textAlign:'right'}}>Amount</th>
                 </tr>
               </thead>
@@ -245,12 +244,9 @@ export default function SpendingPage() {
                         }}>{r.paid_by}</span>
                       ) : <span style={{color:'var(--ink3)',fontSize:12}}>—</span>}
                     </td>
-                    <td style={{fontFamily:'var(--mono)',fontSize:11,color:'var(--ink3)'}}>
-                      {r.transaction_id ?? '—'}
-                    </td>
-                    <td>
-                      <div>{money(Number(r.total))}</div>
-                      <div style={{fontSize:11}}>
+                    <td style={{textAlign:'right'}}>
+                      <div style={{fontFamily:'var(--mono)',fontWeight:500}}>{money(Number(r.total))}</div>
+                      <div style={{fontSize:11,marginTop:2}}>
                         <Link
                           href={`/receipts/${r.id}`}
                           style={{color:'var(--green)',fontWeight:500,textDecoration:'none'}}

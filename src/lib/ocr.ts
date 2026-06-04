@@ -71,16 +71,6 @@ async function compressForVision(source: File | string): Promise<string> {
   })
 }
 
-async function toBase64(source: File | string): Promise<string> {
-  if (typeof source === 'string') return source.split(',')[1] ?? source
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onerror = reject
-    reader.onload = e => resolve((e.target!.result as string).split(',')[1])
-    reader.readAsDataURL(source)
-  })
-}
-
 async function preprocessImage(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()

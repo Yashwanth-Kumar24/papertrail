@@ -9,7 +9,9 @@ export interface Receipt {
   total: number
   tax?: number
   paid_by?: string
+  source: string              // 'scan' | 'manual' | 'costco_api'
   itemCount?: number
+  totalSavings?: number
   image_urls?: string[]
   raw_ocr_text?: string
   created_at: string
@@ -23,7 +25,8 @@ export interface ReceiptItem {
   name: string
   original_price: number
   discount_amount: number
-  final_price: number
+  final_price: number         // negative = returned item
+  quantity: number            // -1 = returned, 1 = default, >1 = multi-unit
   sort_order: number
 }
 
@@ -40,6 +43,7 @@ export interface ParsedItem {
   discount_amount: number
   final_price: number
   sort_order: number
+  quantity?: number           // from Costco import; defaults to 1
 }
 
 export interface ParsedReceipt {
@@ -50,6 +54,7 @@ export interface ParsedReceipt {
   total?: number
   tax?: number
   paid_by?: string
+  source?: string             // 'scan' | 'manual' | 'costco_api'
   line_items: ParsedItem[]
   raw_ocr_text: string
 }
@@ -63,13 +68,21 @@ export interface ShoppingItem {
   created_at: string
 }
 
-export const PAYERS = ['Yash', 'Alekhya', 'Pavan'] as const
+// Colors assigned by position — index 0 = first name in NEXT_PUBLIC_PAYERS, etc.
+const PAYER_PALETTE: { bg: string; color: string }[] = [
+  { bg: '#E8F5EF', color: '#1D6F50' },  // green
+  { bg: '#FCE7F3', color: '#9D174D' },  // pink
+  { bg: '#EDE9FE', color: '#5B21B6' },  // purple
+  { bg: '#DBEAFE', color: '#1D4ED8' },  // blue
+  { bg: '#FEF3C7', color: '#92400E' },  // amber
+  { bg: '#FEE2E2', color: '#991B1B' },  // red
+]
 
-export const PAYER_COLORS: Record<string, { bg: string; color: string }> = {
-  'Yash':    { bg: '#E8F5EF', color: '#1D6F50' },
-  'Alekhya': { bg: '#EDE9FE', color: '#5B21B6' },
-  'Pavan':   { bg: '#FEF3C7', color: '#92400E' },
-}
+export const PAYERS: readonly string[] = (process.env.NEXT_PUBLIC_PAYERS ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+
+export const PAYER_COLORS: Record<string, { bg: string; color: string }> =
+  Object.fromEntries(PAYERS.map((name, i) => [name, PAYER_PALETTE[i % PAYER_PALETTE.length]]))
 
 export interface ItemHistory {
   item_code?: string

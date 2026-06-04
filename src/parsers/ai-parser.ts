@@ -35,6 +35,7 @@ export async function parseWithAI(text: string): Promise<ParsedReceipt> {
       original_price:  Number(item.original_price)          || 0,
       discount_amount: Number(item.discount_amount)         || 0,
       final_price:     Math.max(0, Number(item.final_price) || 0),
+      quantity:        Math.max(1, Math.round(Number(item.quantity) || 1)),
       sort_order:      i,
     })),
     raw_ocr_text: text,

@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import {
   getReceipts, getReceiptMeta, getStats,
-  deleteReceipt, deleteReceipts, RECEIPTS_PAGE_SIZE,
+  deleteReceipt, deleteReceipts, getAllReceiptIds, RECEIPTS_PAGE_SIZE,
 } from '@/lib/queries'
 import type { ReceiptSort } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
@@ -47,13 +47,15 @@ export default function ReceiptsPage() {
   const [selected,      setSelected]      = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [sortBy,        setSortBy]        = useState<ReceiptSort>('date_desc')
+  const [sourceFilter,  setSourceFilter]  = useState('')
+  const [selectingAll,  setSelectingAll]  = useState(false)
 
-  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc') => {
+  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc', src?: string) => {
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
       const [{ data, totalCount: tc }, s, m] = await Promise.all([
-        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort),
-        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined) : Promise.resolve(null),
+        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort, src),
+        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined, src) : Promise.resolve(null),
         off === 0 ? getReceiptMeta() : Promise.resolve(null),
       ])
       setReceipts(prev => append ? [...prev, ...data] : data)
@@ -68,8 +70,8 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setSelected(new Set())
-    loadPage(storeName, date, paidBy, 0, false, sortBy)
-  }, [storeName, date, paidBy, sortBy, loadPage])
+    loadPage(storeName, date, paidBy, 0, false, sortBy, sourceFilter || undefined)
+  }, [storeName, date, paidBy, sortBy, sourceFilter, loadPage])
 
   const availableStores = useMemo(() => {
     let src = allMeta
@@ -117,7 +119,7 @@ export default function ReceiptsPage() {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
       setTotalCount(c => c - 1)
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined)])
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined)])
       setAllMeta(m); setStats(s)
     } catch { alert('Delete failed. Please try again.') }
     finally { setDeleting(null); setConfirmDelete(null) }
@@ -131,7 +133,7 @@ export default function ReceiptsPage() {
       setReceipts(prev => prev.filter(r => !selected.has(r.id)))
       setTotalCount(c => c - selected.size)
       setSelected(new Set())
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined)])
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined)])
       setAllMeta(m); setStats(s)
     } catch { alert('Batch delete failed.') }
     finally { setBatchDeleting(false) }
@@ -143,6 +145,24 @@ export default function ReceiptsPage() {
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
+  }
+
+  async function handleSelectAll() {
+    if (totalCount === receipts.length) {
+      // All receipts already loaded — select from state
+      setSelected(new Set(receipts.map(r => r.id)))
+    } else {
+      // More pages exist — fetch all matching IDs from server
+      setSelectingAll(true)
+      try {
+        const ids = await getAllReceiptIds(
+          storeName || undefined, date || undefined,
+          paidBy || undefined, sourceFilter || undefined,
+        )
+        setSelected(new Set(ids))
+      } catch { alert('Could not select all. Try again.') }
+      finally { setSelectingAll(false) }
+    }
   }
 
   const hasMore = receipts.length < totalCount
@@ -162,9 +182,24 @@ export default function ReceiptsPage() {
 
       <div className="pg-head">
         <span className="pg-title">Receipts</span>
-        <span className="pg-sub">
-          {loading ? '' : `${receipts.length}${totalCount > receipts.length ? ` of ${totalCount}` : ''} shown`}
-        </span>
+        <div style={{display:'flex',alignItems:'center',gap:10}}>
+          <Link
+            href="/costco"
+            style={{
+              fontSize:12,fontWeight:600,padding:'5px 12px',borderRadius:999,
+              background:'#005DAA',color:'#fff',textDecoration:'none',
+              display:'inline-flex',alignItems:'center',gap:5,flexShrink:0,
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/>
+            </svg>
+            Costco
+          </Link>
+          <span className="pg-sub">
+            {loading ? '' : `${receipts.length}${totalCount > receipts.length ? ` of ${totalCount}` : ''} shown`}
+          </span>
+        </div>
       </div>
 
       <div className="filters">
@@ -203,6 +238,59 @@ export default function ReceiptsPage() {
         ))}
       </div>
 
+      {/* Source filter + select-all in one row */}
+      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+        {([
+          { key: '',           label: 'All' },
+          { key: 'scan',       label: 'Scanned' },
+          { key: 'manual',     label: 'Manual' },
+          { key: 'costco_api', label: 'Costco Import' },
+        ]).map(s => {
+          const active = sourceFilter === s.key
+          const color  = s.key === 'costco_api' ? '#005DAA' : 'var(--green)'
+          return (
+            <button
+              key={s.key}
+              onClick={() => setSourceFilter(s.key)}
+              style={{
+                fontSize:12, padding:'4px 11px', borderRadius:999,
+                border:`1px solid ${active ? color : 'var(--border2)'}`,
+                background: active ? color : 'transparent',
+                color:      active ? '#fff' : 'var(--ink2)',
+                fontWeight: active ? 600 : 400,
+                cursor:'pointer', fontFamily:'var(--sans)',
+              }}
+            >{s.label}</button>
+          )
+        })}
+
+        {/* Select all — right side of same row */}
+        {!loading && receipts.length > 0 && (
+          <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+            {selected.size > 0 && (
+              <>
+                <span style={{fontSize:12,color:'var(--ink2)'}}>
+                  <strong>{selected.size}</strong> of {totalCount}
+                </span>
+                <button
+                  onClick={() => setSelected(new Set())}
+                  style={{fontSize:12,color:'var(--ink3)',background:'none',border:'none',cursor:'pointer',textDecoration:'underline',padding:0}}
+                >Clear</button>
+              </>
+            )}
+            {selected.size < totalCount && (
+              <button
+                onClick={handleSelectAll}
+                disabled={selectingAll}
+                style={{fontSize:12,color:'var(--ink2)',background:'none',border:'1px solid var(--border)',borderRadius:6,padding:'4px 12px',cursor:'pointer',flexShrink:0}}
+              >
+                {selectingAll ? 'Selecting…' : `Select all ${totalCount}`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Batch delete bar */}
       {selected.size > 0 && (
         <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'var(--red-bg)',borderRadius:'var(--r)',marginBottom:12}}>
@@ -234,23 +322,34 @@ export default function ReceiptsPage() {
                 <Link href={`/receipts/${r.id}`} style={{textDecoration:'none',color:'inherit',display:'block'}}>
                   <div className="rcard-head">
                     <div style={{flex:1,minWidth:0}}>
-                      <div className="rcard-store">{r.store_name}</div>
+                      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                        <div className="rcard-store">{r.store_name}</div>
+                        {Number(r.total) < 0 && (
+                          <span style={{fontSize:9,fontWeight:700,background:'var(--red-bg)',color:'var(--red-tx)',padding:'2px 6px',borderRadius:999,flexShrink:0}}>REFUND</span>
+                        )}
+                      </div>
                       {r.location && <div className="rcard-meta">{r.location}</div>}
                       <div className="rcard-meta">
                         {fmt(r.purchase_date)}
                         {r.purchase_time ? ` · ${r.purchase_time.slice(0,5)}` : ''}
                         {r.itemCount != null && r.itemCount > 0 ? ` · ${r.itemCount} items` : ''}
                       </div>
-                      {r.paid_by && (
-                        <span style={{
-                          display:'inline-block',marginTop:4,
-                          fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
-                          background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
-                          color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
-                        }}>
-                          {r.paid_by}
-                        </span>
-                      )}
+                      <div style={{display:'flex',alignItems:'center',gap:6,marginTop:4,flexWrap:'wrap'}}>
+                        {r.paid_by && (
+                          <span style={{
+                            fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
+                            background: PAYER_COLORS[r.paid_by]?.bg ?? 'var(--cream2)',
+                            color:      PAYER_COLORS[r.paid_by]?.color ?? 'var(--ink2)',
+                          }}>
+                            {r.paid_by}
+                          </span>
+                        )}
+                        {(r.totalSavings ?? 0) > 0 && (
+                          <span style={{fontSize:11,fontWeight:600,color:'var(--green)'}}>
+                            Saved {money(r.totalSavings!)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0,paddingLeft:12}}>
                       <button
@@ -270,11 +369,10 @@ export default function ReceiptsPage() {
                           </svg>
                         )}
                       </button>
-                      <div className="rcard-total">{money(r.total)}</div>
+                      <div className="rcard-total" style={{color:Number(r.total)<0?'var(--red-tx)':'inherit'}}>
+                        {Number(r.total) < 0 ? `−${money(Math.abs(Number(r.total)))}` : money(r.total)}
+                      </div>
                     </div>
-                  </div>
-                  <div className="rcard-txn">
-                    <span>{r.transaction_id ? `Txn: ${r.transaction_id}` : 'No txn ID'}</span>
                   </div>
                 </Link>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4,borderTop:'1px solid var(--border)'}}>
@@ -298,7 +396,7 @@ export default function ReceiptsPage() {
           {hasMore && (
             <div style={{textAlign:'center',marginTop:20}}>
               <button
-                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy)}
+                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined)}
                 disabled={loadingMore}
                 style={{
                   background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',

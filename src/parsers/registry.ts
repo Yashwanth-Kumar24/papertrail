@@ -22,6 +22,7 @@ export function mergeReceipts(base: ParsedReceipt, add: ParsedReceipt): ParsedRe
   return {
     ...base,
     total:          base.total          ?? add.total,
+    tax:            base.tax            ?? add.tax,
     transaction_id: base.transaction_id ?? add.transaction_id,
     purchase_date:  base.purchase_date  ?? add.purchase_date,
     purchase_time:  base.purchase_time  ?? add.purchase_time,
