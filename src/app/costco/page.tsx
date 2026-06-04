@@ -192,6 +192,7 @@ function toParsedReceipt(detail: DetailReceipt, barcode: string, paidBy: string)
     tax:            Number(detail.taxes) || undefined,
     paid_by:        paidBy,
     source:         'costco_api',
+    category:       'groceries',
     line_items:     processItems(detail.itemArray, isReturn),
     raw_ocr_text:   '',
   }

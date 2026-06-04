@@ -10,6 +10,8 @@ export interface Receipt {
   tax?: number
   paid_by?: string
   source: string              // 'scan' | 'manual' | 'costco_api'
+  category?: string
+  notes?: string
   itemCount?: number
   totalSavings?: number
   image_urls?: string[]
@@ -55,6 +57,8 @@ export interface ParsedReceipt {
   tax?: number
   paid_by?: string
   source?: string             // 'scan' | 'manual' | 'costco_api'
+  category?: string
+  notes?: string
   line_items: ParsedItem[]
   raw_ocr_text: string
 }
@@ -65,6 +69,36 @@ export interface ShoppingItem {
   added_by?: string
   done: boolean
   done_at?: string
+  created_at: string
+}
+
+export interface Budget {
+  id: string
+  category: string
+  amount: number
+  active: boolean
+}
+
+export interface RecurringPayment {
+  id: string
+  recurring_id: string
+  paid_by: string
+  paid_at: string
+  amount: number
+}
+
+export interface RecurringBill {
+  id: string
+  name: string
+  amount: number
+  frequency: 'monthly' | 'annual' | 'weekly' | 'quarterly'
+  due_day?: number      // day of month for monthly (1-31)
+  due_date?: string     // specific date for annual (YYYY-MM-DD)
+  paid_by: string
+  category: string
+  notes?: string
+  last_paid_at?: string
+  active: boolean
   created_at: string
 }
 
@@ -125,4 +159,52 @@ export const BRAND_LABELS: Record<string, string> = {
   'home-depot':  'The Home Depot',
   'lowes':       "Lowe's",
   'other':       'Other',
+}
+
+// ── Categories ─────────────────────────────────────────────
+export const CATEGORIES = [
+  'groceries', 'household', 'utilities', 'dining', 'entertainment',
+  'clothing', 'electronics', 'pharmacy', 'insurance', 'fuel', 'other',
+] as const
+
+export type Category = typeof CATEGORIES[number]
+
+export const CATEGORY_LABELS: Record<string, string> = {
+  'groceries':   'Groceries',
+  'household':   'Household',
+  'utilities':   'Utilities',
+  'dining':         'Dining Out',
+  'entertainment':  'Entertainment',
+  'clothing':       'Clothing',
+  'electronics': 'Electronics',
+  'pharmacy':    'Pharmacy',
+  'insurance':   'Insurance',
+  'fuel':        'Fuel',
+  'other':       'Other',
+}
+
+export const CATEGORY_COLORS: Record<string, { bg: string; color: string }> = {
+  'groceries':   { bg: '#E8F5EF', color: '#1D6F50' },
+  'household':   { bg: '#FEF3C7', color: '#92400E' },
+  'utilities':   { bg: '#E0F2FE', color: '#0369A1' },
+  'dining':        { bg: '#FEE8D8', color: '#9A3412' },
+  'entertainment': { bg: '#FDF4FF', color: '#7E22CE' },
+  'clothing':      { bg: '#EDE9FE', color: '#5B21B6' },
+  'electronics': { bg: '#DBEAFE', color: '#1D4ED8' },
+  'pharmacy':    { bg: '#CCFBF1', color: '#0F766E' },
+  'insurance':   { bg: '#FCE7F3', color: '#9D174D' },
+  'fuel':        { bg: '#E2E8F0', color: '#334155' },
+  'other':       { bg: '#F3F0EA', color: '#5C574E' },
+}
+
+// Auto-suggest category from brand key
+export function suggestCategory(brand: string): string {
+  const map: Record<string, string> = {
+    'costco': 'groceries', 'walmart': 'groceries', 'whole-foods': 'groceries',
+    'safeway': 'groceries', 'trader-joes': 'groceries', 'kroger': 'groceries', 'aldi': 'groceries',
+    'home-depot': 'household', 'lowes': 'household',
+    'ross': 'clothing',
+    'cvs': 'pharmacy', 'walgreens': 'pharmacy',
+  }
+  return map[brand] ?? 'other'
 }

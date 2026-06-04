@@ -7,7 +7,7 @@ import {
 } from '@/lib/queries'
 import type { ReceiptSort } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
-import { PAYER_COLORS } from '@/lib/types'
+import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/lib/types'
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
@@ -47,15 +47,16 @@ export default function ReceiptsPage() {
   const [selected,      setSelected]      = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
   const [sortBy,        setSortBy]        = useState<ReceiptSort>('date_desc')
-  const [sourceFilter,  setSourceFilter]  = useState('')
-  const [selectingAll,  setSelectingAll]  = useState(false)
+  const [sourceFilter,   setSourceFilter]   = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [selectingAll,   setSelectingAll]   = useState(false)
 
-  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc', src?: string) => {
+  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc', src?: string, cat?: string) => {
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
       const [{ data, totalCount: tc }, s, m] = await Promise.all([
-        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort, src),
-        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined, src) : Promise.resolve(null),
+        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort, src, cat),
+        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined, src, cat) : Promise.resolve(null),
         off === 0 ? getReceiptMeta() : Promise.resolve(null),
       ])
       setReceipts(prev => append ? [...prev, ...data] : data)
@@ -70,8 +71,8 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setSelected(new Set())
-    loadPage(storeName, date, paidBy, 0, false, sortBy, sourceFilter || undefined)
-  }, [storeName, date, paidBy, sortBy, sourceFilter, loadPage])
+    loadPage(storeName, date, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
+  }, [storeName, date, paidBy, sortBy, sourceFilter, categoryFilter, loadPage])
 
   const availableStores = useMemo(() => {
     let src = allMeta
@@ -119,7 +120,7 @@ export default function ReceiptsPage() {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
       setTotalCount(c => c - 1)
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined)])
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined)])
       setAllMeta(m); setStats(s)
     } catch { alert('Delete failed. Please try again.') }
     finally { setDeleting(null); setConfirmDelete(null) }
@@ -133,7 +134,7 @@ export default function ReceiptsPage() {
       setReceipts(prev => prev.filter(r => !selected.has(r.id)))
       setTotalCount(c => c - selected.size)
       setSelected(new Set())
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined)])
+      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined)])
       setAllMeta(m); setStats(s)
     } catch { alert('Batch delete failed.') }
     finally { setBatchDeleting(false) }
@@ -157,7 +158,7 @@ export default function ReceiptsPage() {
       try {
         const ids = await getAllReceiptIds(
           storeName || undefined, date || undefined,
-          paidBy || undefined, sourceFilter || undefined,
+          paidBy || undefined, sourceFilter || undefined, categoryFilter || undefined,
         )
         setSelected(new Set(ids))
       } catch { alert('Could not select all. Try again.') }
@@ -236,6 +237,37 @@ export default function ReceiptsPage() {
             }}
           >{s.label}</button>
         ))}
+      </div>
+
+      {/* Category filter pills */}
+      <div style={{display:'flex',gap:6,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
+        <button
+          onClick={() => setCategoryFilter('')}
+          style={{
+            fontSize:12,padding:'4px 11px',borderRadius:999,
+            border:`1px solid ${!categoryFilter ? 'var(--ink)' : 'var(--border2)'}`,
+            background: !categoryFilter ? 'var(--ink)' : 'transparent',
+            color:      !categoryFilter ? 'var(--cream)' : 'var(--ink2)',
+            cursor:'pointer',fontFamily:'var(--sans)',fontWeight: !categoryFilter ? 600 : 400,
+          }}
+        >All</button>
+        {CATEGORIES.map(cat => {
+          const active = categoryFilter === cat
+          return (
+            <button
+              key={cat}
+              onClick={() => setCategoryFilter(active ? '' : cat)}
+              style={{
+                fontSize:12,padding:'4px 11px',borderRadius:999,
+                border:`1px solid ${active ? CATEGORY_COLORS[cat]?.color : 'var(--border2)'}`,
+                background: active ? CATEGORY_COLORS[cat]?.bg  : 'transparent',
+                color:      active ? CATEGORY_COLORS[cat]?.color : 'var(--ink2)',
+                fontWeight: active ? 600 : 400,
+                cursor:'pointer',fontFamily:'var(--sans)',
+              }}
+            >{CATEGORY_LABELS[cat]}</button>
+          )
+        })}
       </div>
 
       {/* Source filter + select-all in one row */}
@@ -344,6 +376,15 @@ export default function ReceiptsPage() {
                             {r.paid_by}
                           </span>
                         )}
+                        {r.category && r.category !== 'other' && (
+                          <span style={{
+                            fontSize:10,fontWeight:600,padding:'2px 7px',borderRadius:999,
+                            background: CATEGORY_COLORS[r.category]?.bg ?? 'var(--cream2)',
+                            color:      CATEGORY_COLORS[r.category]?.color ?? 'var(--ink2)',
+                          }}>
+                            {CATEGORY_LABELS[r.category] ?? r.category}
+                          </span>
+                        )}
                         {(r.totalSavings ?? 0) > 0 && (
                           <span style={{fontSize:11,fontWeight:600,color:'var(--green)'}}>
                             Saved {money(r.totalSavings!)}
@@ -396,7 +437,7 @@ export default function ReceiptsPage() {
           {hasMore && (
             <div style={{textAlign:'center',marginTop:20}}>
               <button
-                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined)}
+                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined, categoryFilter || undefined)}
                 disabled={loadingMore}
                 style={{
                   background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',

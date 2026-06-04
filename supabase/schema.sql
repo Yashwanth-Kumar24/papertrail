@@ -1,5 +1,5 @@
 -- ============================================================
--- PaperTrail — Full Database Schema  (v1.2)
+-- PaperTrail — Full Database Schema  (v1.3)
 -- ============================================================
 -- Run this entire file in the Supabase SQL editor to set up
 -- a fresh project from scratch. Safe to re-run — drops and
@@ -12,6 +12,8 @@ drop table if exists receipt_items      cascade;
 drop table if exists receipts           cascade;
 drop table if exists shopping_list      cascade;
 drop table if exists push_subscriptions cascade;
+drop table if exists budgets            cascade;
+drop table if exists recurring          cascade;
 
 
 -- ── receipts ───────────────────────────────────────────────
@@ -45,6 +47,14 @@ create table receipts (
   -- Source
   source          text          not null default 'scan',
   -- Values: 'scan' (OCR+AI) | 'manual' (typed in) | 'costco_api' (imported from Costco)
+
+  -- Category
+  category        text          not null default 'other',
+  -- Values: groceries | household | utilities | dining | entertainment |
+  --         clothing | electronics | pharmacy | insurance | fuel | other
+
+  -- Optional notes
+  notes           text,
 
   -- Media + raw data
   image_urls      text[],                       -- Supabase Storage public URLs (optional)
@@ -103,15 +113,64 @@ create table push_subscriptions (
 );
 
 
+-- ── budgets ────────────────────────────────────────────────
+-- Monthly spending budgets per category.
+create table budgets (
+  id         uuid          primary key default gen_random_uuid(),
+  category   text          not null unique,     -- must match CATEGORIES in types.ts
+  amount     numeric(10,2) not null default 0,
+  active     boolean       not null default true,
+  created_at timestamptz   default now(),
+  updated_at timestamptz   default now()
+);
+
+
+-- ── recurring ──────────────────────────────────────────────
+-- Recurring bills and subscriptions.
+create table recurring (
+  id           uuid          primary key default gen_random_uuid(),
+  name         text          not null,
+  amount       numeric(10,2) not null,
+  frequency    text          not null default 'monthly',
+  -- Values: monthly | annual | weekly | quarterly
+  due_day      integer,                         -- day of month for monthly (1-31)
+  due_date     date,                            -- specific date for annual
+  paid_by      text          not null,
+  category     text          not null default 'other',
+  -- Same values as receipts.category
+  notes        text,
+  last_paid_at timestamptz,
+  active       boolean       not null default true,
+  created_at   timestamptz   default now()
+);
+
+
+-- ── recurring_payments ─────────────────────────────────────
+-- Log of every "mark as paid" event — tracks who paid which bill each cycle.
+create table recurring_payments (
+  id           uuid          primary key default gen_random_uuid(),
+  recurring_id uuid          not null references recurring(id) on delete cascade,
+  paid_by      text          not null,
+  paid_at      timestamptz   not null default now(),
+  amount       numeric(10,2) not null,
+  created_at   timestamptz   default now()
+);
+
+
 -- ── Indexes ────────────────────────────────────────────────
 create index on receipts(brand);
 create index on receipts(purchase_date desc);
 create index on receipts(created_at desc);
 create index on receipts(source);
 create index on receipts(paid_by);
+create index on receipts(category);
 create index on receipt_items(receipt_id);
 create index on receipt_items(item_code);
 create index on receipt_items using gin(to_tsvector('english', name));
+create index on recurring(active);
+create index on recurring_payments(recurring_id);
+create index on recurring_payments(paid_at desc);
+create index on recurring_payments(paid_by);
 
 
 -- ── item_purchase_history (view) ──────────────────────────
@@ -135,7 +194,8 @@ create view item_purchase_history as
     r.location,
     r.transaction_id,
     r.source,
-    r.paid_by
+    r.paid_by,
+    r.category
   from receipt_items ri
   join receipts r on r.id = ri.receipt_id
   where ri.final_price >= 0;
@@ -149,6 +209,9 @@ alter table receipts           disable row level security;
 alter table receipt_items      disable row level security;
 alter table shopping_list      disable row level security;
 alter table push_subscriptions disable row level security;
+alter table budgets            disable row level security;
+alter table recurring          disable row level security;
+alter table recurring_payments disable row level security;
 
 
 -- ── Duplicate prevention indexes ──────────────────────────
@@ -181,21 +244,67 @@ create unique index receipts_unique_notxn
 
 
 -- ============================================================
--- Migration helpers
+-- Migration helpers — for upgrading an existing database
 -- ============================================================
--- Use these when migrating an existing database to a new project,
--- or when making the changes below to an already-running instance.
+
+-- ── Add category + notes (upgrading from v1.2) ─────────────
+-- alter table receipts add column if not exists category text not null default 'other';
+-- alter table receipts add column if not exists notes text;
+-- create index if not exists receipts_category_idx on receipts(category);
 
 -- ── Add source column (if upgrading from pre-v1.2 schema) ──
 -- alter table receipts add column if not exists source text not null default 'scan';
--- create index if not exists on receipts(source);
 
 -- ── Add quantity column (if upgrading from pre-v1.2 schema) ──
 -- alter table receipt_items add column if not exists quantity integer not null default 1;
 
+-- ── Create budgets table (upgrading from v1.2) ─────────────
+-- create table if not exists budgets (
+--   id uuid primary key default gen_random_uuid(),
+--   category text not null unique,
+--   amount numeric(10,2) not null default 0,
+--   active boolean not null default true,
+--   created_at timestamptz default now(),
+--   updated_at timestamptz default now()
+-- );
+-- alter table budgets disable row level security;
+
+-- ── Create recurring_payments table (upgrading from v1.3) ──
+-- create table if not exists recurring_payments (
+--   id           uuid          primary key default gen_random_uuid(),
+--   recurring_id uuid          not null references recurring(id) on delete cascade,
+--   paid_by      text          not null,
+--   paid_at      timestamptz   not null default now(),
+--   amount       numeric(10,2) not null,
+--   created_at   timestamptz   default now()
+-- );
+-- alter table recurring_payments disable row level security;
+-- create index if not exists recurring_payments_rid_idx  on recurring_payments(recurring_id);
+-- create index if not exists recurring_payments_at_idx   on recurring_payments(paid_at desc);
+-- create index if not exists recurring_payments_by_idx   on recurring_payments(paid_by);
+
+-- ── Create recurring table (upgrading from v1.2) ───────────
+-- create table if not exists recurring (
+--   id uuid primary key default gen_random_uuid(),
+--   name text not null,
+--   amount numeric(10,2) not null,
+--   frequency text not null default 'monthly',
+--   due_day integer,
+--   due_date date,
+--   paid_by text not null,
+--   category text not null default 'other',
+--   notes text,
+--   last_paid_at timestamptz,
+--   active boolean not null default true,
+--   created_at timestamptz default now()
+-- );
+-- alter table recurring disable row level security;
+-- create index if not exists on recurring(active);
+
 -- ── Rename a household member ──────────────────────────────
 -- UPDATE receipts      SET paid_by  = 'NewName' WHERE paid_by  = 'OldName';
 -- UPDATE shopping_list SET added_by = 'NewName' WHERE added_by = 'OldName';
+-- UPDATE recurring     SET paid_by  = 'NewName' WHERE paid_by  = 'OldName';
 
 -- ── Backfill paid_by if it was nullable in an older schema ─
 -- UPDATE receipts SET paid_by = 'YourName' WHERE paid_by IS NULL;

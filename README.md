@@ -13,7 +13,8 @@ A personal household receipt tracker — scan any store receipt, extract items w
 | **v1.0** | AI Core | OCR + GPT-4o-mini parsing, spending analytics, brand normalization |
 | **v1.1** | Household | Paid by, Needs list, PWA, push notifications, price alerts, receipt editing, batch delete |
 | **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field, back-button fix for price alerts |
-| **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(planned)* |
+| **v1.3** | Finance layer | Categories, budget system, recurring bills, spending sub-tabs, heatmap, analytics upgrades, monthly digest |
+| **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(future scope)* |
 
 ---
 
@@ -442,7 +443,44 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 
 ---
 
-## v2.0 — Planned
+### v1.3 — Categories, Budget, Recurring & Analytics
+*Full household finance layer — spending context, fixed bills, and budgeting.*
+
+**Categories**
+- 11 categories across all receipts, recurring bills, and budgets: Groceries, Household, Utilities, Dining Out, Entertainment, Clothing, Electronics, Pharmacy, Insurance, Fuel, Other
+- Auto-suggested from store brand on scan (Costco → Groceries, CVS → Pharmacy, Home Depot → Household, etc.)
+- Shown as colored pills on receipt cards, receipt detail, and throughout the app
+- Filterable on the Receipts page via category pill row
+- Optional notes field (up to 280 chars) on every receipt — shown below items with a 📝 icon
+
+**Spending page — 3 sub-tabs**
+- **Summary tab** (default) — key metrics, top categories, top 5 stores, top 3 biggest receipts, payer split; recurring obligation card with link to Recurring tab
+- **Analytics tab** — existing charts + per-store trend arrows (↑/↓/→), year-over-year toggle on the by-month chart, spending calendar heatmap (3-shade coral heat scale, tap a day to see receipts)
+- **Budget tab** — monthly limits per category; master overview bar + per-category progress bars (green → amber → red at 75% → 100%); inline edit panel
+
+**Recurring bills tab** (new nav item)
+- Track rent, subscriptions, utilities — anything paid on a regular schedule
+- Frequencies: monthly, annual, weekly, quarterly
+- Due-date-based paid/unpaid cycle — auto-resets when next due date passes; amber "Next due in 3d" warning before reset
+- Mark as paid: date picker (allows backdating) + payer picker — records who paid this cycle
+- Undo mark-as-paid with one tap
+- Payment history per bill — full log of who paid, when, and how much; add past payments manually; delete individual entries
+- Analytics: by-category bar chart + full monthly breakdown table
+- Mobile: Scan moves to a green FAB above the nav bar; Recurring takes the freed nav slot
+
+**Payer split with recurring**
+- Spending Summary "By payer" now shows receipt spending vs recurring payments side by side with a split bar and legend
+
+**Other**
+- Monthly digest card — appears at top of Spending first week of each new month; shows last month's total, delta vs prior month, top 3 categories, biggest receipt; dismissible
+- `NEXT_PUBLIC_PAYERS` env var fully controls household members — no names anywhere in code or README
+- All store grouping fixed: same store never appears twice in spending charts regardless of brand key differences
+- Heatmap color palette: 3-shade coral (light rose → soft coral → warm red) with readable text at each level
+- Numerous bug fixes: category filter server-side pagination, recurring paid_by NOT NULL constraint on delete, unused imports removed, dynamic import replaced with static
+
+---
+
+## v2.0 — Future scope
 
 - Multi-user support with auth (Supabase Auth or Clerk)
 - Bring Your Own Key (BYOK) for OpenAI and Google Vision

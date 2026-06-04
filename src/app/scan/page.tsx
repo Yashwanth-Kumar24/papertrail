@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { recognizeReceipt } from '@/lib/ocr'
 import { parseReceipt, mergeReceipts } from '@/parsers/registry'
 import type { ParsedReceipt, ParsedItem } from '@/lib/types'
-import { PAYERS, PAYER_COLORS } from '@/lib/types'
+import { PAYERS, PAYER_COLORS, CATEGORIES, CATEGORY_LABELS, suggestCategory } from '@/lib/types'
 import { saveReceipt, uploadReceiptImage } from '@/lib/queries'
 
 type Step = 'capture' | 'scanning' | 'review' | 'saving'
@@ -81,8 +81,10 @@ export default function ScanPage() {
   const [editDate,    setEditDate]    = useState('')
   const [editTime,    setEditTime]    = useState('')
   const [editTotal,   setEditTotal]   = useState('')
-  const [editPaidBy,  setEditPaidBy]  = useState('')
-  const [editTax,     setEditTax]     = useState('')
+  const [editPaidBy,    setEditPaidBy]    = useState('')
+  const [editTax,       setEditTax]       = useState('')
+  const [editCategory,  setEditCategory]  = useState('other')
+  const [editNotes,     setEditNotes]     = useState('')
   const photoRef  = useRef<HTMLInputElement>(null)
   const uploadRef = useRef<HTMLInputElement>(null)
 
@@ -101,6 +103,7 @@ export default function ScanPage() {
           setEditTime(merged.purchase_time ?? '')
           setEditTotal(merged.total != null ? String(merged.total) : '')
           setEditTax(merged.tax   != null ? String(merged.tax)   : '')
+          setEditCategory(suggestCategory(merged.store.brand))
         }
         return merged
       })
@@ -116,7 +119,8 @@ export default function ScanPage() {
     setItems([blankItem(0)])
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal(''); setEditPaidBy('')
-    setEditTax(''); setManualMode(true); setStep('review'); setError('')
+    setEditTax(''); setEditCategory('other'); setEditNotes('')
+    setManualMode(true); setStep('review'); setError('')
   }
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -166,6 +170,8 @@ export default function ScanPage() {
         tax:           editTax  !== '' ? (parseFloat(editTax)  || 0) : parsed.tax,
         paid_by:       editPaidBy,
         source:        manualMode ? 'manual' : 'scan',
+        category:      editCategory || 'other',
+        notes:         editNotes.trim() || undefined,
         line_items:    items,
         store: {
           ...parsed.store,
@@ -216,6 +222,7 @@ export default function ScanPage() {
     setSaveImg(false); setStep('capture'); setError('')
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal(''); setEditTax(''); setEditPaidBy('')
+    setEditCategory('other'); setEditNotes('')
     setManualMode(false)
   }
 
@@ -406,6 +413,30 @@ export default function ScanPage() {
                 <option value="">— select payer —</option>
                 {PAYERS.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
+            </div>
+
+            {/* Category */}
+            <div className="rp-row">
+              <span className="rp-label">Category</span>
+              <select
+                value={editCategory}
+                onChange={e => setEditCategory(e.target.value)}
+                style={{fontSize:13,padding:'3px 8px',border:'1px solid var(--border)',borderRadius:4,background:'#fff',fontFamily:'var(--sans)',cursor:'pointer'}}
+              >
+                {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+              </select>
+            </div>
+
+            {/* Notes */}
+            <div className="rp-row" style={{flexDirection:'column',gap:4,alignItems:'stretch'}}>
+              <span className="rp-label">Notes</span>
+              <input suppressHydrationWarning
+                value={editNotes}
+                onChange={e => setEditNotes(e.target.value.slice(0, 280))}
+                placeholder="e.g. birthday dinner, work reimbursement…"
+                maxLength={280}
+                style={{fontSize:12,padding:'4px 7px',border:'1px solid var(--border)',borderRadius:4,color:'var(--ink2)',width:'100%'}}
+              />
             </div>
 
             {parsed.transaction_id && (

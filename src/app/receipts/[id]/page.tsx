@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { getReceiptById, deleteReceipt, updateReceipt, replaceReceiptItems } from '@/lib/queries'
 import type { Receipt, ReceiptItem } from '@/lib/types'
-import { PAYER_COLORS, PAYERS, BRAND_LABELS } from '@/lib/types'
+import { PAYER_COLORS, PAYERS, BRAND_LABELS, CATEGORIES, CATEGORY_LABELS, CATEGORY_COLORS } from '@/lib/types'
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
@@ -71,8 +71,10 @@ export default function ReceiptDetail() {
   const [editTime,    setEditTime]    = useState('')
   const [editTotal,   setEditTotal]   = useState('')
   const [editTax,     setEditTax]     = useState('')
-  const [editPaidBy,  setEditPaidBy]  = useState('')
-  const [editItems,   setEditItems]   = useState<EditItem[]>([])
+  const [editPaidBy,   setEditPaidBy]   = useState('')
+  const [editCategory, setEditCategory] = useState('other')
+  const [editNotes,    setEditNotes]    = useState('')
+  const [editItems,    setEditItems]    = useState<EditItem[]>([])
 
   useEffect(() => {
     getReceiptById(id).then(setReceipt).finally(() => setLoading(false))
@@ -87,6 +89,8 @@ export default function ReceiptDetail() {
     setEditTotal(String(r.total))
     setEditTax(r.tax != null ? String(r.tax) : '')
     setEditPaidBy(r.paid_by ?? '')
+    setEditCategory(r.category ?? 'other')
+    setEditNotes(r.notes ?? '')
     setEditItems((r.receipt_items ?? []).map(toEditItem))
     setEditErr('')
     setEditing(true)
@@ -110,6 +114,8 @@ export default function ReceiptDetail() {
         total:         parseFloat(editTotal) || 0,
         tax:           editTax !== '' ? (parseFloat(editTax) || 0) : undefined,
         paid_by:       editPaidBy,
+        category:      editCategory || 'other',
+        notes:         editNotes.trim() || undefined,
       })
       await replaceReceiptItems(id, editItems.filter(i => i.name.trim()))
       const updated = await getReceiptById(id)
@@ -267,17 +273,27 @@ export default function ReceiptDetail() {
                   <input type="number" step="0.01" value={editTax} onChange={e => setEditTax(e.target.value)} style={{...inputStyle,fontFamily:'var(--mono)'}} placeholder="0.00"/>
                 </div>
               </div>
-              <div style={{marginBottom:4}}>
+              <div style={{marginBottom:14}}>
                 <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Paid by</div>
                 <select value={editPaidBy} onChange={e => setEditPaidBy(e.target.value)} style={{...inputStyle,cursor:'pointer'}}>
                   <option value="">— select —</option>
                   {PAYERS.map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Category</div>
+                <select value={editCategory} onChange={e => setEditCategory(e.target.value)} style={{...inputStyle,cursor:'pointer'}}>
+                  {CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+                </select>
+              </div>
+              <div style={{marginBottom:4}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Notes</div>
+                <input value={editNotes} onChange={e => setEditNotes(e.target.value.slice(0,280))} placeholder="e.g. birthday dinner, work reimbursement…" maxLength={280} style={inputStyle}/>
+              </div>
             </>
           ) : (
             <>
-              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:12}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8,marginBottom:8}}>
                 <h2 style={{margin:0}}>{receipt.store_name}</h2>
                 {sourceBadge && (
                   <span style={{fontSize:10,fontWeight:600,background:sourceBadge.bg,color:sourceBadge.color,padding:'3px 8px',borderRadius:999,flexShrink:0,whiteSpace:'nowrap',border:`1px solid ${sourceBadge.color}22`}}>
@@ -285,6 +301,17 @@ export default function ReceiptDetail() {
                   </span>
                 )}
               </div>
+              {receipt.category && (
+                <div style={{marginBottom:12}}>
+                  <span style={{
+                    fontSize:11,fontWeight:600,padding:'3px 10px',borderRadius:999,
+                    background: CATEGORY_COLORS[receipt.category]?.bg ?? 'var(--cream2)',
+                    color:      CATEGORY_COLORS[receipt.category]?.color ?? 'var(--ink2)',
+                  }}>
+                    {CATEGORY_LABELS[receipt.category] ?? receipt.category}
+                  </span>
+                </div>
+              )}
               {receipt.location && (
                 <div className="meta-row">
                   <span className="meta-label">Location</span>
@@ -446,6 +473,14 @@ export default function ReceiptDetail() {
           )}
         </div>
       </div>
+
+      {/* Notes */}
+      {!editing && receipt.notes && (
+        <div style={{marginTop:16,padding:'12px 16px',background:'var(--cream2)',borderRadius:'var(--r)',display:'flex',gap:10,alignItems:'flex-start'}}>
+          <span style={{fontSize:16,flexShrink:0}}>📝</span>
+          <span style={{fontSize:13,color:'var(--ink2)',lineHeight:1.5}}>{receipt.notes}</span>
+        </div>
+      )}
 
       {/* Receipt images */}
       <div style={{marginTop:24}}>

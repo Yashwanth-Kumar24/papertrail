@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import type { Receipt, ParsedReceipt, ItemHistory, ShoppingItem } from './types'
+import type { Receipt, ParsedReceipt, ItemHistory, ShoppingItem, Budget, RecurringBill, RecurringPayment } from './types'
 
 // ── Save receipt ───────────────────────────────────────────
 export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
@@ -45,6 +45,8 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       tax:            parsed.tax            ?? null,
       paid_by:        parsed.paid_by        ?? null,
       source:         parsed.source         ?? 'scan',
+      category:       parsed.category       ?? 'other',
+      notes:          parsed.notes          ?? null,
       raw_ocr_text:   parsed.raw_ocr_text,
     })
     .select('id')
@@ -104,6 +106,7 @@ export async function getReceipts(
   offset = 0,
   sortBy: ReceiptSort = 'date_desc',
   source?: string,
+  category?: string,
 ): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
@@ -114,6 +117,7 @@ export async function getReceipts(
   if (date)      q = q.eq('purchase_date', date)
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
+  if (category)  q = q.eq('category', category)
 
   if (sortBy === 'date_desc')  q = q.order('purchase_date', { ascending: false }).order('created_at', { ascending: false })
   if (sortBy === 'date_asc')   q = q.order('purchase_date', { ascending: true  }).order('created_at', { ascending: true  })
@@ -158,12 +162,13 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
-export async function getStats(storeName?: string, date?: string, paidBy?: string, source?: string) {
+export async function getStats(storeName?: string, date?: string, paidBy?: string, source?: string, category?: string) {
   let rq = supabase.from('receipts').select('id, total')
   if (storeName) rq = rq.eq('store_name', storeName)
   if (date)      rq = rq.eq('purchase_date', date)
   if (paidBy)    rq = rq.eq('paid_by', paidBy)
   if (source)    rq = rq.eq('source', source)
+  if (category)  rq = rq.eq('category', category)
   const { data: recs } = await rq
 
   const ids    = (recs ?? []).map((r: any) => r.id)
@@ -321,7 +326,7 @@ function groupHistory(rows: any[]): ItemHistory[] {
 export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
   let q = supabase
     .from('receipts')
-    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total, paid_by')
+    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total, paid_by, category, notes, source')
     .order('purchase_date', { ascending: false })
 
   if (dateFrom) q = q.gte('purchase_date', dateFrom)
@@ -346,19 +351,15 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
   const totalSpent = receipts.reduce((s, r) => s + Number(r.total), 0)
   const avgPerTrip = receipts.length ? totalSpent / receipts.length : 0
 
-  // By brand
-  const brandMap = new Map<string, { name: string; count: number; total: number }>()
+  // By store — group by store_name so the same store never appears twice
+  // regardless of whether brand normalization differs between scan vs API import
+  const brandMap = new Map<string, { brand: string; name: string; count: number; total: number }>()
   for (const r of receipts) {
-    const key = r.brand
-    const prev = brandMap.get(key) ?? { name: r.store_name, count: 0, total: 0 }
-    brandMap.set(key, {
-      name:  prev.name,
-      count: prev.count + 1,
-      total: prev.total + Number(r.total),
-    })
+    const key  = r.store_name.toLowerCase().trim()
+    const prev = brandMap.get(key) ?? { brand: r.brand, name: r.store_name, count: 0, total: 0 }
+    brandMap.set(key, { ...prev, count: prev.count + 1, total: prev.total + Number(r.total) })
   }
-  const byBrand = [...brandMap.entries()]
-    .map(([brand, v]) => ({ brand, ...v }))
+  const byBrand = [...brandMap.values()]
     .sort((a, b) => b.total - a.total)
 
   // By month
@@ -382,6 +383,18 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
     .map(([payer, v]) => ({ payer, ...v }))
     .sort((a, b) => b.total - a.total)
 
+  // By category
+  const categoryMap = new Map<string, { count: number; total: number }>()
+  for (const r of receipts) {
+    if (Number(r.total) <= 0) continue
+    const cat = (r as any).category ?? 'other'
+    const prev = categoryMap.get(cat) ?? { count: 0, total: 0 }
+    categoryMap.set(cat, { count: prev.count + 1, total: prev.total + Number(r.total) })
+  }
+  const byCategory = [...categoryMap.entries()]
+    .map(([category, v]) => ({ category, ...v }))
+    .sort((a, b) => b.total - a.total)
+
   return {
     totalSpent,
     totalSaved,
@@ -390,6 +403,7 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
     byBrand,
     byMonth,
     byPayer,
+    byCategory,
     receipts,
   }
 }
@@ -454,12 +468,14 @@ export async function getAllReceiptIds(
   date?: string,
   paidBy?: string,
   source?: string,
+  category?: string,
 ): Promise<string[]> {
   let q = supabase.from('receipts').select('id')
   if (storeName) q = q.eq('store_name', storeName)
   if (date)      q = q.eq('purchase_date', date)
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
+  if (category)  q = q.eq('category', category)
   const { data, error } = await q
   if (error) throw new Error(error.message)
   return (data ?? []).map((r: any) => r.id)
@@ -475,6 +491,8 @@ export async function updateReceipt(id: string, data: {
   total: number
   tax?: number
   paid_by: string
+  category?: string
+  notes?: string
 }): Promise<void> {
   const { error } = await supabase
     .from('receipts')
@@ -487,6 +505,8 @@ export async function updateReceipt(id: string, data: {
       total:         data.total,
       tax:           data.tax ?? null,
       paid_by:       data.paid_by,
+      category:      data.category ?? 'other',
+      notes:         data.notes || null,
     })
     .eq('id', id)
   if (error) throw new Error(error.message)
@@ -523,9 +543,216 @@ export async function getReturnCandidates(): Promise<import('./types').ItemHisto
     .limit(2000)
   if (error) throw new Error(error.message)
   const all = groupHistory(data ?? [])
-  // Show items where the most expensive past purchase costs more than the current price.
-  // These are return candidates: user can bring the expensive receipt and get a refund/rebuy.
   return all
     .filter(i => i.purchases.length > 1 && i.max_price > i.latest_price)
     .sort((a, b) => (b.max_price - b.latest_price) - (a.max_price - a.latest_price))
+}
+
+// ── Receipts by date (for heatmap day detail) ──────────────
+export async function getReceiptsByDate(date: string): Promise<Receipt[]> {
+  const { data, error } = await supabase
+    .from('receipts')
+    .select('*, receipt_items(discount_amount)')
+    .eq('purchase_date', date)
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []).map(({ receipt_items, ...r }: any) => ({
+    ...r,
+    totalSavings: (receipt_items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount ?? 0), 0),
+  })) as Receipt[]
+}
+
+// ── Daily spending totals for calendar heatmap ─────────────
+export async function getDailySpending(
+  year: number,
+  month: number,
+): Promise<Record<string, { total: number; count: number }>> {
+  const from = `${year}-${String(month).padStart(2, '0')}-01`
+  const lastDay = new Date(year, month, 0).getDate()
+  const to   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+
+  const { data } = await supabase
+    .from('receipts')
+    .select('purchase_date, total')
+    .gte('purchase_date', from)
+    .lte('purchase_date', to)
+
+  const map: Record<string, { total: number; count: number }> = {}
+  for (const r of data ?? []) {
+    if (Number(r.total) <= 0) continue
+    const d = r.purchase_date as string
+    if (!map[d]) map[d] = { total: 0, count: 0 }
+    map[d].total += Number(r.total)
+    map[d].count += 1
+  }
+  return map
+}
+
+// ── Category spending for current month (for budget check) ─
+export async function getCategorySpendingForMonth(
+  month: string,   // "YYYY-MM"
+): Promise<Record<string, number>> {
+  const from = `${month}-01`
+  const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()
+  const to   = `${month}-${String(lastDay).padStart(2, '0')}`
+
+  const { data } = await supabase
+    .from('receipts')
+    .select('category, total')
+    .gte('purchase_date', from)
+    .lte('purchase_date', to)
+
+  const map: Record<string, number> = {}
+  for (const r of data ?? []) {
+    if (Number(r.total) <= 0) continue
+    const cat = (r.category as string) ?? 'other'
+    map[cat] = (map[cat] ?? 0) + Number(r.total)
+  }
+  return map
+}
+
+// ── Budgets ────────────────────────────────────────────────
+export async function getBudgets(): Promise<Budget[]> {
+  const { data, error } = await supabase
+    .from('budgets')
+    .select('*')
+    .order('category')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Budget[]
+}
+
+export async function upsertBudget(
+  category: string,
+  amount: number,
+  active: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from('budgets')
+    .upsert({ category, amount, active, updated_at: new Date().toISOString() }, { onConflict: 'category' })
+  if (error) throw new Error(error.message)
+}
+
+// ── Recurring bills ────────────────────────────────────────
+export async function getRecurring(): Promise<RecurringBill[]> {
+  const { data, error } = await supabase
+    .from('recurring')
+    .select('*')
+    .eq('active', true)
+    .order('name')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as RecurringBill[]
+}
+
+export async function addRecurring(bill: Omit<RecurringBill, 'id' | 'created_at' | 'last_paid_at'>): Promise<RecurringBill> {
+  const { data, error } = await supabase
+    .from('recurring')
+    .insert(bill)
+    .select()
+    .single()
+  if (error) throw new Error(error.message)
+  return data as RecurringBill
+}
+
+export async function updateRecurring(id: string, bill: Partial<Omit<RecurringBill, 'id' | 'created_at'>>): Promise<void> {
+  const { error } = await supabase
+    .from('recurring')
+    .update(bill)
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteRecurring(id: string): Promise<void> {
+  const { error } = await supabase.from('recurring').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function markRecurringPaid(id: string, paidBy: string, paidAt?: string): Promise<void> {
+  const { data: bill } = await supabase.from('recurring').select('amount').eq('id', id).single()
+  const ts = paidAt ? new Date(paidAt + 'T12:00:00').toISOString() : new Date().toISOString()
+
+  const [{ error: billErr }, { error: payErr }] = await Promise.all([
+    supabase.from('recurring').update({ last_paid_at: ts, paid_by: paidBy }).eq('id', id),
+    supabase.from('recurring_payments').insert({
+      recurring_id: id, paid_by: paidBy, paid_at: ts, amount: bill?.amount ?? 0,
+    }),
+  ])
+  if (billErr) throw new Error(billErr.message)
+  if (payErr)  throw new Error(payErr.message)
+}
+
+export async function markRecurringUnpaid(id: string): Promise<void> {
+  // Find and delete the most recent payment for this bill
+  const { data: latest } = await supabase
+    .from('recurring_payments')
+    .select('id')
+    .eq('recurring_id', id)
+    .order('paid_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  await supabase.from('recurring').update({ last_paid_at: null }).eq('id', id)
+  if (latest?.id) {
+    await supabase.from('recurring_payments').delete().eq('id', latest.id)
+  }
+}
+
+export async function addRecurringPaymentManual(
+  recurringId: string, paidBy: string, paidAt: string, amount: number,
+): Promise<void> {
+  const ts = new Date(paidAt + 'T12:00:00').toISOString()
+  await supabase.from('recurring_payments').insert({
+    recurring_id: recurringId, paid_by: paidBy, paid_at: ts, amount,
+  })
+  // Update last_paid_at on the bill if this payment is more recent
+  const { data: bill } = await supabase.from('recurring').select('last_paid_at').eq('id', recurringId).single()
+  if (!bill?.last_paid_at || new Date(ts) > new Date(bill.last_paid_at)) {
+    await supabase.from('recurring').update({ last_paid_at: ts, paid_by: paidBy }).eq('id', recurringId)
+  }
+}
+
+export async function deleteRecurringPayment(paymentId: string, recurringId: string): Promise<void> {
+  await supabase.from('recurring_payments').delete().eq('id', paymentId)
+  // Recalculate last_paid_at from remaining payments
+  const { data: remaining } = await supabase
+    .from('recurring_payments')
+    .select('paid_at, paid_by')
+    .eq('recurring_id', recurringId)
+    .order('paid_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  // Only update paid_by when a previous payment exists — paid_by is NOT NULL in schema
+  const update: Record<string, unknown> = { last_paid_at: remaining?.paid_at ?? null }
+  if (remaining?.paid_by) update.paid_by = remaining.paid_by
+  await supabase.from('recurring').update(update).eq('id', recurringId)
+}
+
+export async function getRecurringPaymentHistory(recurringId: string): Promise<RecurringPayment[]> {
+  const { data, error } = await supabase
+    .from('recurring_payments')
+    .select('*')
+    .eq('recurring_id', recurringId)
+    .order('paid_at', { ascending: false })
+    .limit(12)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as RecurringPayment[]
+}
+
+export async function getRecurringPaymentsForPeriod(
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<{ payer: string; total: number; count: number }[]> {
+  let q = supabase.from('recurring_payments').select('paid_by, amount')
+  if (dateFrom) q = q.gte('paid_at', dateFrom + 'T00:00:00')
+  if (dateTo)   q = q.lte('paid_at', dateTo   + 'T23:59:59')
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+
+  const map = new Map<string, { total: number; count: number }>()
+  for (const p of data ?? []) {
+    const prev = map.get(p.paid_by) ?? { total: 0, count: 0 }
+    map.set(p.paid_by, { total: prev.total + Number(p.amount), count: prev.count + 1 })
+  }
+  return [...map.entries()]
+    .map(([payer, v]) => ({ payer, ...v }))
+    .sort((a, b) => b.total - a.total)
 }

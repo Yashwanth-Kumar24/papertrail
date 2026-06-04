@@ -317,6 +317,25 @@ input:focus, select:focus { border-color: var(--green); }
   50%       { opacity: 0.4; }
 }
 
+/* MOBILE FAB — scan button above bottom nav */
+.mob-fab {
+  display: none;
+  position: fixed;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px) + 12px);
+  right: 20px;
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  box-shadow: 0 4px 16px rgba(29,111,80,0.4);
+  z-index: 190;
+  align-items: center; justify-content: center;
+  transition: transform .15s, box-shadow .15s;
+}
+.mob-fab:hover { transform: scale(1.06); box-shadow: 0 6px 20px rgba(29,111,80,0.5); }
+@media (max-width: 768px) { .mob-fab { display: flex; } }
+
 /* Spending table */
 .spending-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .spending-table th {

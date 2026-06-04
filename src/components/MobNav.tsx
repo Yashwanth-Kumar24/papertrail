@@ -12,6 +12,10 @@ const links = [
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
   },
   {
+    href: '/recurring', label: 'Recurring',
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+  },
+  {
     href: '/items', label: 'Items',
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
   },
@@ -19,24 +23,30 @@ const links = [
     href: '/needs', label: 'Needs',
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><polyline points="4 6 5 7 7 5"/><polyline points="4 12 5 13 7 11"/><polyline points="4 18 5 19 7 17"/></svg>
   },
-  {
-    href: '/scan', label: 'Scan',
-    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7V4h3M17 4h3v3M4 17v3h3M17 20h3v-3M7 12h10"/></svg>
-  },
 ]
 
 export default function MobNav() {
   const path = usePathname()
   return (
-    <nav className="mobnav" aria-label="Mobile navigation">
-      <div className="mobtabs">
-        {links.map(l => (
-          <Link key={l.href} href={l.href} className={`mobtab ${path.startsWith(l.href) ? 'active' : ''}`}>
-            {l.icon}
-            <span>{l.label}</span>
-          </Link>
-        ))}
-      </div>
-    </nav>
+    <>
+      {/* Floating scan button — mobile only */}
+      <Link href="/scan" className="mob-fab" aria-label="New scan">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+      </Link>
+
+      <nav className="mobnav" aria-label="Mobile navigation">
+        <div className="mobtabs">
+          {links.map(l => (
+            <Link key={l.href} href={l.href} className={`mobtab ${path.startsWith(l.href) ? 'active' : ''}`}>
+              {l.icon}
+              <span>{l.label}</span>
+            </Link>
+          ))}
+        </div>
+      </nav>
+    </>
   )
 }
