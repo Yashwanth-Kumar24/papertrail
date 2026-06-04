@@ -17,6 +17,7 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 ### Receipts
 - Browse all receipts in a card grid
 - Filter by store, date, and payer — all three dropdowns coordinate with each other
+- **Sort** — Newest first / Oldest first / $ High→Low / $ Low→High
 - **Batch select** — check multiple receipts and delete them all at once
 - Paginated (20 per page) with "Load more"
 - Stats bar: total receipts, total spent, line items count, total saved
@@ -24,14 +25,16 @@ A personal receipt tracker — scan any store receipt, extract items with AI, se
 ### Spending
 - Date range analytics with preset buttons (This week / This month / Last 3 months / This year / All time) and a custom date picker
 - Summary cards: total spent, receipt count, avg per trip, total saved via discounts
+- **By payer** bar chart (color-coded) showing each household member's spend and % of total
 - By-store bar chart, by-month bar chart
-- Full receipt list for the selected period with links to detail views
+- Full receipt list for the selected period with Paid by column and links to detail views
 
 ### Items
 - Search any item by name, item code, or price across all receipts
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- Return flag — red highlight when the latest price is higher than the earliest (useful for Costco price-match returns)
+- **↑ Price alerts mode** — one tap shows all items where a past purchase is more expensive than the current price; sorted by savings, links directly to the return receipt. Works across all stores. Days since expensive purchase shown (green = likely within return window)
+- Grouping: item code when available (reliable across stores); name-only items are scoped to the same store to prevent false cross-store matches
 
 ### Needs
 - Shared household shopping list synced via Supabase
@@ -340,9 +343,7 @@ Default: `Yash`, `Alekhya`, `Pavan`. To change, edit `PAYERS` and `PAYER_COLORS`
 
 ## Stage 2 planned
 
-- Edit receipt after saving (item name, price corrections, paid by)
-- Dedicated return tracker view (items where price went up since first purchase)
-- Spending breakdown by payer (data is already computed; UI pending)
 - Multi-user support with auth
 - Bring Your Own Key (BYOK) for OpenAI and Google Vision
 - Docker Compose for self-hosting
+- Excel export (.xlsx) — summary sheet + one sheet per receipt with full item detail and image link

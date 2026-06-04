@@ -12,7 +12,6 @@ function TrendBadge({ trend, min, max, latestPrice }: { trend: ItemHistory['tren
   if (trend === 'single' || trend === 'stable') return <span style={{color:'var(--ink3)', fontSize:12}}>= stable</span>
   if (trend === 'up')   return <span className="tr-up">↑ +${Math.abs(max - min).toFixed(2)}</span>
   if (trend === 'down') {
-    const savings = (max - latestPrice).toFixed(2)
     return <><span className="tr-dn">↓ −${Math.abs(max - min).toFixed(2)}</span>{' '}<span className="ret-tip">return opportunity</span></>
   }
   return null
@@ -170,7 +169,7 @@ function ItemsPageContent() {
       <div className="pg-head">
         <span className="pg-title">Items</span>
         <span className="pg-sub">
-          {mode === 'search' ? 'Search across all receipts' : `${returns.length} price increase${returns.length !== 1 ? 's' : ''} found`}
+          {mode === 'search' ? 'Search across all receipts' : `${returns.length} return opportunit${returns.length !== 1 ? 'ies' : 'y'} found`}
         </span>
       </div>
 
@@ -274,8 +273,8 @@ function ItemsPageContent() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
               </svg>
-              <p style={{fontWeight:500}}>No price increases found</p>
-              <p style={{fontSize:13}}>All items are at the same or lower price than when first purchased</p>
+              <p style={{fontWeight:500}}>No return opportunities found</p>
+              <p style={{fontSize:13}}>All items are at the same or higher price as when you first bought them</p>
             </div>
           )}
 

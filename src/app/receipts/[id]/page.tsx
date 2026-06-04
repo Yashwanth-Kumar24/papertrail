@@ -106,7 +106,7 @@ export default function ReceiptDetail() {
         purchase_date: editDate,
         purchase_time: editTime || undefined,
         total:         parseFloat(editTotal) || 0,
-        tax:           editTax !== '' ? parseFloat(editTax) : undefined,
+        tax:           editTax !== '' ? (parseFloat(editTax) || 0) : undefined,
         paid_by:       editPaidBy,
       })
       await replaceReceiptItems(id, editItems.filter(i => i.name.trim()))
@@ -125,10 +125,13 @@ export default function ReceiptDetail() {
       if (i !== idx) return item
       if (field === 'name' || field === 'item_code') return { ...item, [field]: value }
       const num = parseFloat(value) || 0
-      if (field === 'final_price') return { ...item, final_price: num, original_price: num, discount_amount: 0 }
-      if (field === 'discount_amount') {
-        const disc = Math.min(num, item.original_price)
-        return { ...item, discount_amount: disc, final_price: item.original_price - disc }
+      if (field === 'original_price') {
+        const disc = Math.max(0, num - item.final_price)
+        return { ...item, original_price: num, discount_amount: disc }
+      }
+      if (field === 'final_price') {
+        const disc = Math.max(0, item.original_price - num)
+        return { ...item, final_price: num, discount_amount: disc }
       }
       return { ...item, [field]: num }
     }))

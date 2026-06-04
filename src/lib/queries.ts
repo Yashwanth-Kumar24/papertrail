@@ -426,6 +426,14 @@ export async function deleteShoppingItem(id: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+export async function undoShoppingItem(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('shopping_list')
+    .update({ done: false, done_at: null })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
 export async function clearDoneItems(): Promise<void> {
   const { error } = await supabase.from('shopping_list').delete().eq('done', true)
   if (error) throw new Error(error.message)

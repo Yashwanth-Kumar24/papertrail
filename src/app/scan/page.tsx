@@ -151,14 +151,19 @@ export default function ScanPage() {
       setError('Please select who paid for this receipt.')
       return
     }
+
+    // Snapshot files now — prevents files appended during async ops (or between retries)
+    // from being included in this save attempt.
+    const filesToUpload = [...imgFiles]
+
     setStep('saving')
     try {
       const final: ParsedReceipt = {
         ...parsed,
         purchase_date: editDate  || parsed.purchase_date,
         purchase_time: editTime  || parsed.purchase_time,
-        total:         parseFloat(editTotal) || parsed.total,
-        tax:           editTax !== '' ? parseFloat(editTax) : parsed.tax,
+        total:         editTotal !== '' ? (parseFloat(editTotal) || 0) : (parsed.total ?? 0),
+        tax:           editTax  !== '' ? (parseFloat(editTax)  || 0) : parsed.tax,
         paid_by:       editPaidBy,
         line_items:    items,
         store: {
@@ -169,11 +174,11 @@ export default function ScanPage() {
       }
       const id = await saveReceipt(final)
 
-      if (saveImg && imgFiles.length > 0) {
+      if (saveImg && filesToUpload.length > 0) {
         const urls: string[] = []
-        for (let i = 0; i < imgFiles.length; i++) {
+        for (let i = 0; i < filesToUpload.length; i++) {
           const url = await uploadReceiptImage(
-            imgFiles[i], id, i,
+            filesToUpload[i], id, i,
             final.store.brand,
             final.purchase_date ?? new Date().toISOString().split('T')[0]
           )
@@ -197,6 +202,9 @@ export default function ScanPage() {
 
       router.push(`/receipts/${id}`)
     } catch (e: any) {
+      // Restore the snapshot — discard any files that were appended after save was triggered.
+      // This prevents imgFiles from growing across multiple failed save attempts.
+      setImgFiles(filesToUpload)
       setError(e.message ?? 'Save failed.')
       setStep('review')
     }
@@ -278,6 +286,13 @@ export default function ScanPage() {
               {error && step !== 'review' && (
                 <div style={{marginTop:12,padding:'10px 14px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:13}}>
                   {error}
+                </div>
+              )}
+
+              {/* When in review after a save error, warn user not to re-scan */}
+              {step === 'review' && error && (
+                <div style={{marginTop:12,padding:'10px 14px',background:'#FEF3C7',color:'#92400E',borderRadius:'var(--r)',fontSize:12,lineHeight:1.5}}>
+                  <strong>Your scan is ready.</strong> Fix the issue on the right, then click Save receipt. Don't retake the photo — it's already queued.
                 </div>
               )}
 

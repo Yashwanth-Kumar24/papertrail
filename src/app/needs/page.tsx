@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { getShoppingList, addShoppingItem, markShoppingItemDone, deleteShoppingItem, clearDoneItems } from '@/lib/queries'
+import { getShoppingList, addShoppingItem, markShoppingItemDone, undoShoppingItem, deleteShoppingItem, clearDoneItems } from '@/lib/queries'
 import type { ShoppingItem } from '@/lib/types'
 import { PAYERS, PAYER_COLORS } from '@/lib/types'
 
@@ -55,12 +55,7 @@ export default function ListPage() {
 
   const undone = async (id: string) => {
     setItems(prev => prev.map(i => i.id === id ? { ...i, done: false, done_at: undefined } : i))
-    try {
-      const { supabase } = await import('@/lib/supabase')
-      await supabase.from('shopping_list').update({ done: false, done_at: null }).eq('id', id)
-    } catch {
-      load()
-    }
+    try { await undoShoppingItem(id) } catch { load() }
   }
 
   const remove = async (id: string) => {

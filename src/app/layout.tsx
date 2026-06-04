@@ -15,8 +15,7 @@ export const metadata: Metadata = {
   title: 'PaperTrail',
   description: 'Scan and search your receipts',
   icons: {
-    icon:  '/icon.svg',
-    apple: '/apple-icon.png',
+    apple: '/apple-icon',
   },
   appleWebApp: {
     capable:         true,
