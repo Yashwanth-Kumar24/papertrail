@@ -101,7 +101,8 @@ export type ReceiptSort = 'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'
 // ── Get receipts list (paginated, with item count) ─────────
 export async function getReceipts(
   storeName?: string,
-  date?: string,
+  dateFrom?: string,
+  dateTo?: string,
   paidBy?: string,
   offset = 0,
   sortBy: ReceiptSort = 'date_desc',
@@ -114,7 +115,8 @@ export async function getReceipts(
     .range(offset, offset + PAGE_SIZE - 1)
 
   if (storeName) q = q.eq('store_name', storeName)
-  if (date)      q = q.eq('purchase_date', date)
+  if (dateFrom)  q = q.gte('purchase_date', dateFrom)
+  if (dateTo)    q = q.lte('purchase_date', dateTo)
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
   if (category)  q = q.eq('category', category)
@@ -162,10 +164,11 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
-export async function getStats(storeName?: string, date?: string, paidBy?: string, source?: string, category?: string) {
+export async function getStats(storeName?: string, dateFrom?: string, dateTo?: string, paidBy?: string, source?: string, category?: string) {
   let rq = supabase.from('receipts').select('id, total')
   if (storeName) rq = rq.eq('store_name', storeName)
-  if (date)      rq = rq.eq('purchase_date', date)
+  if (dateFrom)  rq = rq.gte('purchase_date', dateFrom)
+  if (dateTo)    rq = rq.lte('purchase_date', dateTo)
   if (paidBy)    rq = rq.eq('paid_by', paidBy)
   if (source)    rq = rq.eq('source', source)
   if (category)  rq = rq.eq('category', category)
@@ -465,14 +468,16 @@ export async function clearDoneItems(): Promise<void> {
 // ── Get all receipt IDs matching current filter (for select-all across pages) ─
 export async function getAllReceiptIds(
   storeName?: string,
-  date?: string,
+  dateFrom?: string,
+  dateTo?: string,
   paidBy?: string,
   source?: string,
   category?: string,
 ): Promise<string[]> {
   let q = supabase.from('receipts').select('id')
   if (storeName) q = q.eq('store_name', storeName)
-  if (date)      q = q.eq('purchase_date', date)
+  if (dateFrom)  q = q.gte('purchase_date', dateFrom)
+  if (dateTo)    q = q.lte('purchase_date', dateTo)
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
   if (category)  q = q.eq('category', category)
@@ -632,32 +637,110 @@ export async function upsertBudget(
   if (error) throw new Error(error.message)
 }
 
-// ── Recurring bills ────────────────────────────────────────
-export async function getRecurring(): Promise<RecurringBill[]> {
-  const { data, error } = await supabase
-    .from('recurring')
-    .select('*')
-    .eq('active', true)
-    .order('name')
-  if (error) throw new Error(error.message)
-  return (data ?? []) as RecurringBill[]
+// ── Recurring: cycle window (pure, no DB calls) ────────────
+// Returns the inclusive date range [cycleStart, cycleEnd] for the current
+// billing cycle of a bill, relative to the given reference date (default: today).
+export function getCycleWindow(
+  bill: RecurringBill,
+  ref?: Date,
+): { cycleStart: Date; cycleEnd: Date } {
+  const today = ref ? new Date(ref) : new Date()
+  today.setHours(0, 0, 0, 0)
+
+  if (bill.frequency === 'monthly' && bill.due_day) {
+    const day = bill.due_day
+    // cycleStart = this month's due_day if today >= that day, else last month's
+    const cycleStart = today.getDate() >= day
+      ? new Date(today.getFullYear(), today.getMonth(), day)
+      : new Date(today.getFullYear(), today.getMonth() - 1, day)
+    // cycleEnd = day before next due_day occurrence (JS day=0 gives last day of prev month)
+    const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, day - 1)
+    return { cycleStart, cycleEnd }
+  }
+
+  if (bill.frequency === 'annual' && bill.due_date) {
+    const base = new Date(bill.due_date + 'T00:00:00')
+    const thisYear = new Date(today.getFullYear(), base.getMonth(), base.getDate())
+    const cycleStart = today >= thisYear
+      ? thisYear
+      : new Date(today.getFullYear() - 1, base.getMonth(), base.getDate())
+    const cycleEnd = new Date(cycleStart.getFullYear() + 1, cycleStart.getMonth(), cycleStart.getDate())
+    cycleEnd.setDate(cycleEnd.getDate() - 1)
+    return { cycleStart, cycleEnd }
+  }
+
+  if (bill.frequency === 'quarterly' && bill.due_date) {
+    const base = new Date(bill.due_date + 'T00:00:00')
+    let d = new Date(base)
+    // Roll forward until d is the first occurrence strictly after today
+    while (d <= today) d.setMonth(d.getMonth() + 3)
+    const cycleStart = new Date(d); cycleStart.setMonth(cycleStart.getMonth() - 3)
+    const cycleEnd   = new Date(d); cycleEnd.setDate(cycleEnd.getDate() - 1)
+    return { cycleStart, cycleEnd }
+  }
+
+  // Weekly (or any bill with no due info)
+  const cycleEnd   = new Date(today)
+  const cycleStart = new Date(today); cycleStart.setDate(cycleStart.getDate() - 6)
+  return { cycleStart, cycleEnd }
 }
 
-export async function addRecurring(bill: Omit<RecurringBill, 'id' | 'created_at' | 'last_paid_at'>): Promise<RecurringBill> {
-  const { data, error } = await supabase
-    .from('recurring')
-    .insert(bill)
-    .select()
-    .single()
+function isoDate(d: Date): string {
+  return d.toISOString().split('T')[0]
+}
+
+// ── Recurring bills ────────────────────────────────────────
+// Two queries total — no per-bill queries.
+// Attaches paidThisCycle / cycleStart / cycleEnd / cyclePayment to each bill.
+export async function getRecurring(): Promise<RecurringBill[]> {
+  // Look back 13 months to cover even annual cycles that were paid near their start date
+  const lookback = new Date()
+  lookback.setMonth(lookback.getMonth() - 13)
+
+  const [{ data: bills, error }, { data: payments }] = await Promise.all([
+    supabase.from('recurring').select('*').eq('active', true).order('name'),
+    supabase.from('recurring_payments')
+      .select('id, recurring_id, paid_by, paid_at, amount')
+      .gte('paid_at', lookback.toISOString())
+      .order('paid_at', { ascending: false }),
+  ])
+  if (error) throw new Error(error.message)
+
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+
+  return (bills ?? []).map((bill: any) => {
+    const { cycleStart, cycleEnd } = getCycleWindow(bill as RecurringBill, today)
+
+    // Find all payments whose date falls inside [cycleStart, cycleEnd]
+    const cyclePayments = (payments ?? []).filter((p: any) => {
+      if (p.recurring_id !== bill.id) return false
+      const pDate = new Date(p.paid_at); pDate.setHours(0, 0, 0, 0)
+      return pDate >= cycleStart && pDate <= cycleEnd
+    })
+
+    const paidThisCycle = cyclePayments.length > 0
+    const cyclePayment  = paidThisCycle
+      ? { paid_at: cyclePayments[0].paid_at, paid_by: cyclePayments[0].paid_by, amount: Number(cyclePayments[0].amount) }
+      : null
+
+    return {
+      ...bill,
+      paidThisCycle,
+      cycleStart: isoDate(cycleStart),
+      cycleEnd:   isoDate(cycleEnd),
+      cyclePayment,
+    } as RecurringBill
+  })
+}
+
+export async function addRecurring(bill: Omit<RecurringBill, 'id' | 'created_at' | 'paidThisCycle' | 'cycleStart' | 'cycleEnd' | 'cyclePayment'>): Promise<RecurringBill> {
+  const { data, error } = await supabase.from('recurring').insert(bill).select().single()
   if (error) throw new Error(error.message)
   return data as RecurringBill
 }
 
-export async function updateRecurring(id: string, bill: Partial<Omit<RecurringBill, 'id' | 'created_at'>>): Promise<void> {
-  const { error } = await supabase
-    .from('recurring')
-    .update(bill)
-    .eq('id', id)
+export async function updateRecurring(id: string, bill: Partial<Omit<RecurringBill, 'id' | 'created_at' | 'paidThisCycle' | 'cycleStart' | 'cycleEnd' | 'cyclePayment'>>): Promise<void> {
+  const { error } = await supabase.from('recurring').update(bill).eq('id', id)
   if (error) throw new Error(error.message)
 }
 
@@ -666,64 +749,58 @@ export async function deleteRecurring(id: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// Insert payment row + update paid_by on the bill. No last_paid_at sync needed.
 export async function markRecurringPaid(id: string, paidBy: string, paidAt?: string): Promise<void> {
   const { data: bill } = await supabase.from('recurring').select('amount').eq('id', id).single()
   const ts = paidAt ? new Date(paidAt + 'T12:00:00').toISOString() : new Date().toISOString()
-
-  const [{ error: billErr }, { error: payErr }] = await Promise.all([
-    supabase.from('recurring').update({ last_paid_at: ts, paid_by: paidBy }).eq('id', id),
-    supabase.from('recurring_payments').insert({
-      recurring_id: id, paid_by: paidBy, paid_at: ts, amount: bill?.amount ?? 0,
-    }),
+  const [{ error: payErr }, { error: billErr }] = await Promise.all([
+    supabase.from('recurring_payments').insert({ recurring_id: id, paid_by: paidBy, paid_at: ts, amount: bill?.amount ?? 0 }),
+    supabase.from('recurring').update({ paid_by: paidBy }).eq('id', id),
   ])
-  if (billErr) throw new Error(billErr.message)
   if (payErr)  throw new Error(payErr.message)
+  if (billErr) throw new Error(billErr.message)
 }
 
+// Delete the current-cycle payment. Paid status recomputes on next getRecurring call.
 export async function markRecurringUnpaid(id: string): Promise<void> {
-  // Find and delete the most recent payment for this bill
-  const { data: latest } = await supabase
+  const { data: bill } = await supabase.from('recurring').select('*').eq('id', id).single()
+  if (!bill) return
+
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const { cycleStart, cycleEnd } = getCycleWindow(bill as RecurringBill, today)
+
+  // Find the most recent payment that falls within the current cycle window
+  const cycleEndTs = new Date(cycleEnd); cycleEndTs.setHours(23, 59, 59, 999)
+  const { data: payment } = await supabase
     .from('recurring_payments')
     .select('id')
     .eq('recurring_id', id)
+    .gte('paid_at', cycleStart.toISOString())
+    .lte('paid_at', cycleEndTs.toISOString())
     .order('paid_at', { ascending: false })
     .limit(1)
     .maybeSingle()
 
-  await supabase.from('recurring').update({ last_paid_at: null }).eq('id', id)
-  if (latest?.id) {
-    await supabase.from('recurring_payments').delete().eq('id', latest.id)
+  if (payment?.id) {
+    await supabase.from('recurring_payments').delete().eq('id', payment.id)
   }
 }
 
+// Insert a manually-dated payment. Cycle membership is computed at read time — no sync needed.
 export async function addRecurringPaymentManual(
   recurringId: string, paidBy: string, paidAt: string, amount: number,
 ): Promise<void> {
   const ts = new Date(paidAt + 'T12:00:00').toISOString()
-  await supabase.from('recurring_payments').insert({
+  const { error } = await supabase.from('recurring_payments').insert({
     recurring_id: recurringId, paid_by: paidBy, paid_at: ts, amount,
   })
-  // Update last_paid_at on the bill if this payment is more recent
-  const { data: bill } = await supabase.from('recurring').select('last_paid_at').eq('id', recurringId).single()
-  if (!bill?.last_paid_at || new Date(ts) > new Date(bill.last_paid_at)) {
-    await supabase.from('recurring').update({ last_paid_at: ts, paid_by: paidBy }).eq('id', recurringId)
-  }
+  if (error) throw new Error(error.message)
 }
 
-export async function deleteRecurringPayment(paymentId: string, recurringId: string): Promise<void> {
-  await supabase.from('recurring_payments').delete().eq('id', paymentId)
-  // Recalculate last_paid_at from remaining payments
-  const { data: remaining } = await supabase
-    .from('recurring_payments')
-    .select('paid_at, paid_by')
-    .eq('recurring_id', recurringId)
-    .order('paid_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  // Only update paid_by when a previous payment exists — paid_by is NOT NULL in schema
-  const update: Record<string, unknown> = { last_paid_at: remaining?.paid_at ?? null }
-  if (remaining?.paid_by) update.paid_by = remaining.paid_by
-  await supabase.from('recurring').update(update).eq('id', recurringId)
+// Delete any payment by ID. Paid status recomputes automatically on next load.
+export async function deleteRecurringPayment(paymentId: string): Promise<void> {
+  const { error } = await supabase.from('recurring_payments').delete().eq('id', paymentId)
+  if (error) throw new Error(error.message)
 }
 
 export async function getRecurringPaymentHistory(recurringId: string): Promise<RecurringPayment[]> {

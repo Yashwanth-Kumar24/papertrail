@@ -12,6 +12,16 @@ import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/li
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
 const money = (n: number) => `$${Number(n).toFixed(2)}`
+const toISO = (d: Date) => d.toISOString().split('T')[0]
+
+const DATE_PRESETS = [
+  { label: 'All time',      days: 0   },
+  { label: 'This week',     days: 7   },
+  { label: 'This month',    days: 30  },
+  { label: 'Last 3 months', days: 90  },
+  { label: 'This year',     days: 365 },
+  { label: 'Custom',        days: -1  },
+]
 
 function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
@@ -39,7 +49,9 @@ export default function ReceiptsPage() {
   const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
   const [storeName,     setStoreName]     = useState('')
-  const [date,          setDate]          = useState('')
+  const [datePreset,    setDatePreset]    = useState('All time')
+  const [dateFrom,      setDateFrom]      = useState('')
+  const [dateTo,        setDateTo]        = useState('')
   const [paidBy,        setPaidBy]        = useState('')
   const [loading,       setLoading]       = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -51,12 +63,16 @@ export default function ReceiptsPage() {
   const [categoryFilter, setCategoryFilter] = useState('')
   const [selectingAll,   setSelectingAll]   = useState(false)
 
-  const loadPage = useCallback(async (sn: string, dt: string, pb: string, off: number, append: boolean, sort: ReceiptSort = 'date_desc', src?: string, cat?: string) => {
+  const loadPage = useCallback(async (
+    sn: string, df: string, dt: string, pb: string,
+    off: number, append: boolean,
+    sort: ReceiptSort = 'date_desc', src?: string, cat?: string,
+  ) => {
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
       const [{ data, totalCount: tc }, s, m] = await Promise.all([
-        getReceipts(sn || undefined, dt || undefined, pb || undefined, off, sort, src, cat),
-        off === 0 ? getStats(sn || undefined, dt || undefined, pb || undefined, src, cat) : Promise.resolve(null),
+        getReceipts(sn || undefined, df || undefined, dt || undefined, pb || undefined, off, sort, src, cat),
+        off === 0 ? getStats(sn || undefined, df || undefined, dt || undefined, pb || undefined, src, cat) : Promise.resolve(null),
         off === 0 ? getReceiptMeta() : Promise.resolve(null),
       ])
       setReceipts(prev => append ? [...prev, ...data] : data)
@@ -71,58 +87,53 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setSelected(new Set())
-    loadPage(storeName, date, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
-  }, [storeName, date, paidBy, sortBy, sourceFilter, categoryFilter, loadPage])
+    loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
+  }, [storeName, dateFrom, dateTo, paidBy, sortBy, sourceFilter, categoryFilter, loadPage])
 
-  const availableStores = useMemo(() => {
+  // Filter allMeta by active date range + source + category for coordinated dropdowns
+  const filteredMeta = useMemo(() => {
     let src = allMeta
-    if (date)          src = src.filter(m => m.purchase_date === date)
-    if (paidBy)        src = src.filter(m => m.paid_by === paidBy)
-    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
-    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
-    return [...new Set(src.map(m => m.store_name))].sort()
-  }, [allMeta, date, paidBy, sourceFilter, categoryFilter])
-
-  const availableDates = useMemo(() => {
-    let src = allMeta
-    if (storeName)     src = src.filter(m => m.store_name === storeName)
-    if (paidBy)        src = src.filter(m => m.paid_by === paidBy)
-    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
-    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
-    return [...new Set(src.map(m => m.purchase_date))].sort().reverse()
-  }, [allMeta, storeName, paidBy, sourceFilter, categoryFilter])
-
-  const availablePayers = useMemo(() => {
-    let src = allMeta
-    if (storeName)     src = src.filter(m => m.store_name === storeName)
-    if (date)          src = src.filter(m => m.purchase_date === date)
-    if (sourceFilter)  src = src.filter(m => m.source === sourceFilter)
-    if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
-    return [...new Set(src.map(m => m.paid_by).filter(Boolean))].sort() as string[]
-  }, [allMeta, storeName, date, sourceFilter, categoryFilter])
-
-  function applyStaticFilters(src: typeof allMeta) {
+    if (dateFrom)       src = src.filter(m => m.purchase_date >= dateFrom)
+    if (dateTo)         src = src.filter(m => m.purchase_date <= dateTo)
     if (sourceFilter)   src = src.filter(m => m.source === sourceFilter)
     if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
     return src
+  }, [allMeta, dateFrom, dateTo, sourceFilter, categoryFilter])
+
+  const availableStores = useMemo(() => {
+    let src = filteredMeta
+    if (paidBy) src = src.filter(m => m.paid_by === paidBy)
+    return [...new Set(src.map(m => m.store_name))].sort()
+  }, [filteredMeta, paidBy])
+
+  const availablePayers = useMemo(() => {
+    let src = filteredMeta
+    if (storeName) src = src.filter(m => m.store_name === storeName)
+    return [...new Set(src.map(m => m.paid_by).filter(Boolean))].sort() as string[]
+  }, [filteredMeta, storeName])
+
+  function applyPreset(label: string, days: number) {
+    setDatePreset(label)
+    if (days === 0) {
+      setDateFrom(''); setDateTo('')
+    } else if (days > 0) {
+      setDateTo(toISO(new Date()))
+      setDateFrom(toISO(new Date(Date.now() - days * 86400000)))
+    }
+    // days === -1 means Custom — keep current dates, user edits manually
   }
+
   function handleStoreChange(s: string) {
     setStoreName(s)
-    const sub = applyStaticFilters(s ? allMeta.filter(m => m.store_name === s) : allMeta)
-    if (date   && !sub.some(m => m.purchase_date === date))   setDate('')
-    if (paidBy && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
-  }
-  function handleDateChange(d: string) {
-    setDate(d)
-    const sub = applyStaticFilters(d ? allMeta.filter(m => m.purchase_date === d) : allMeta)
-    if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
-    if (paidBy    && !sub.some(m => m.paid_by === paidBy))       setPaidBy('')
+    // Reset paidBy if no longer valid under new store + current filters
+    const sub = (s ? filteredMeta.filter(m => m.store_name === s) : filteredMeta)
+    if (paidBy && !sub.some(m => m.paid_by === paidBy)) setPaidBy('')
   }
   function handlePayerChange(p: string) {
     setPaidBy(p)
-    const sub = applyStaticFilters(p ? allMeta.filter(m => m.paid_by === p) : allMeta)
+    // Reset storeName if no longer valid under new payer + current filters
+    const sub = (p ? filteredMeta.filter(m => m.paid_by === p) : filteredMeta)
     if (storeName && !sub.some(m => m.store_name === storeName)) setStoreName('')
-    if (date      && !sub.some(m => m.purchase_date === date))   setDate('')
   }
 
   async function handleDelete(id: string) {
@@ -131,7 +142,10 @@ export default function ReceiptsPage() {
       await deleteReceipt(id)
       setReceipts(prev => prev.filter(r => r.id !== id))
       setTotalCount(c => c - 1)
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined)])
+      const [m, s] = await Promise.all([
+        getReceiptMeta(),
+        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined),
+      ])
       setAllMeta(m); setStats(s)
     } catch { alert('Delete failed. Please try again.') }
     finally { setDeleting(null); setConfirmDelete(null) }
@@ -145,7 +159,10 @@ export default function ReceiptsPage() {
       setReceipts(prev => prev.filter(r => !selected.has(r.id)))
       setTotalCount(c => c - selected.size)
       setSelected(new Set())
-      const [m, s] = await Promise.all([getReceiptMeta(), getStats(storeName||undefined, date||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined)])
+      const [m, s] = await Promise.all([
+        getReceiptMeta(),
+        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined),
+      ])
       setAllMeta(m); setStats(s)
     } catch { alert('Batch delete failed.') }
     finally { setBatchDeleting(false) }
@@ -161,14 +178,12 @@ export default function ReceiptsPage() {
 
   async function handleSelectAll() {
     if (totalCount === receipts.length) {
-      // All receipts already loaded — select from state
       setSelected(new Set(receipts.map(r => r.id)))
     } else {
-      // More pages exist — fetch all matching IDs from server
       setSelectingAll(true)
       try {
         const ids = await getAllReceiptIds(
-          storeName || undefined, date || undefined,
+          storeName || undefined, dateFrom || undefined, dateTo || undefined,
           paidBy || undefined, sourceFilter || undefined, categoryFilter || undefined,
         )
         setSelected(new Set(ids))
@@ -214,14 +229,11 @@ export default function ReceiptsPage() {
         </div>
       </div>
 
+      {/* Store + payer dropdowns */}
       <div className="filters">
         <select className="fsel" value={storeName} onChange={e => handleStoreChange(e.target.value)}>
           <option value="">All stores</option>
           {availableStores.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select className="fsel" value={date} onChange={e => handleDateChange(e.target.value)}>
-          <option value="">All dates</option>
-          {availableDates.map(d => <option key={d} value={d}>{fmt(d)}</option>)}
         </select>
         <select className="fsel" value={paidBy} onChange={e => handlePayerChange(e.target.value)}>
           <option value="">All payers</option>
@@ -229,6 +241,41 @@ export default function ReceiptsPage() {
         </select>
       </div>
 
+      {/* Date range — preset pills */}
+      <div style={{display:'flex',gap:6,marginBottom: datePreset === 'Custom' ? 8 : 14,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginRight:4}}>Date range</span>
+        {DATE_PRESETS.map(p => (
+          <button
+            key={p.label}
+            onClick={() => applyPreset(p.label, p.days)}
+            style={{
+              fontSize:12,padding:'4px 11px',borderRadius:999,
+              border:`1px solid ${datePreset===p.label ? 'var(--ink)' : 'var(--border2)'}`,
+              background: datePreset===p.label ? 'var(--ink)' : 'transparent',
+              color:      datePreset===p.label ? 'var(--cream)' : 'var(--ink2)',
+              fontWeight: datePreset===p.label ? 600 : 400,
+              cursor:'pointer', fontFamily:'var(--sans)',
+            }}
+          >{p.label}</button>
+        ))}
+      </div>
+      {datePreset === 'Custom' && (
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:14}}>
+          <input
+            type="date" value={dateFrom}
+            onChange={e => setDateFrom(e.target.value)}
+            style={{fontSize:12,padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'var(--r)'}}
+          />
+          <span style={{color:'var(--ink3)',fontSize:13}}>→</span>
+          <input
+            type="date" value={dateTo}
+            onChange={e => setDateTo(e.target.value)}
+            style={{fontSize:12,padding:'5px 8px',border:'1px solid var(--border)',borderRadius:'var(--r)'}}
+          />
+        </div>
+      )}
+
+      {/* Sort pills */}
       <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
         {([
           { key:'date_desc',  label:'Newest first' },
@@ -307,7 +354,7 @@ export default function ReceiptsPage() {
           )
         })}
 
-        {/* Select all — right side of same row */}
+        {/* Select all */}
         {!loading && receipts.length > 0 && (
           <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
             {selected.size > 0 && (
@@ -448,7 +495,7 @@ export default function ReceiptsPage() {
           {hasMore && (
             <div style={{textAlign:'center',marginTop:20}}>
               <button
-                onClick={() => loadPage(storeName, date, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined, categoryFilter || undefined)}
+                onClick={() => loadPage(storeName, dateFrom, dateTo, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined, categoryFilter || undefined)}
                 disabled={loadingMore}
                 style={{
                   background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',

@@ -77,7 +77,7 @@ function MonthlyDigest({ onDismiss }: { onDismiss: () => void }) {
             <span style={{fontSize:22,fontWeight:700,fontFamily:'var(--mono)'}}>{money(data.totalSpent)}</span>
             {delta !== null && (
               <span style={{fontSize:12,color: delta > 0 ? 'var(--red)' : 'var(--green)', fontWeight:600}}>
-                {delta > 0 ? '↑' : '↓'} {money(Math.abs(delta))} vs {new Date(now.getFullYear(), now.getMonth()-2, 1).toLocaleDateString('en-US',{month:'short'})}
+                {delta > 0 ? '↑' : '↓'} {money(Math.abs(delta))} {delta > 0 ? 'more than' : 'less than'} {new Date(now.getFullYear(), now.getMonth()-2, 1).toLocaleDateString('en-US',{month:'short'})}
               </span>
             )}
           </div>
@@ -166,13 +166,13 @@ function SpendingHeatmap() {
   const days     = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const blanks   = Array.from({ length: firstDow })
 
-  // 3-tier coral/red palette — intuitive "spending intensity"
+  // 3-tier green palette — matches app accent color
   function heatColor(total: number): { bg: string; text: string } {
     if (total === 0) return { bg: 'var(--cream2)', text: 'var(--ink3)' }
     const pct = total / maxDay
-    if (pct < 0.33) return { bg: '#FEE2E2', text: '#B91C1C' }   // light rose
-    if (pct < 0.66) return { bg: '#FCA5A5', text: '#7F1D1D' }   // soft coral
-    return              { bg: '#EF4444', text: '#fff'     }       // warm red
+    if (pct < 0.33) return { bg: '#D1F0E0', text: '#1D6F50' }   // light green
+    if (pct < 0.66) return { bg: '#6DBF92', text: '#0D3D28' }   // medium green
+    return              { bg: '#1D6F50', text: '#fff'     }       // deep green
   }
 
   const isoDay = (d: number) =>
@@ -276,62 +276,131 @@ function SpendingHeatmap() {
   )
 }
 
+// ── Helpers shared by BudgetTab ───────────────────────────
+function toMonthlyAmount(b: RecurringBill): number {
+  if (b.frequency === 'monthly')   return b.amount
+  if (b.frequency === 'annual')    return b.amount / 12
+  if (b.frequency === 'weekly')    return b.amount * 4.33
+  if (b.frequency === 'quarterly') return b.amount / 3
+  return b.amount
+}
+
+// Due badge — reads pre-computed paidThisCycle / cyclePayment / cycleEnd from getRecurring()
+function billBadge(b: RecurringBill): { label: string; color: string } {
+  if (b.paidThisCycle && b.cyclePayment) {
+    const paid = new Date(b.cyclePayment.paid_at)
+    return { label: `Paid · ${paid.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, color: 'var(--green)' }
+  }
+  if (!b.cycleEnd) return { label: 'No due date', color: 'var(--ink3)' }
+  const now     = new Date(); now.setHours(0, 0, 0, 0)
+  const nextDue = new Date(b.cycleEnd + 'T00:00:00'); nextDue.setDate(nextDue.getDate() + 1)
+  const diff    = Math.round((nextDue.getTime() - now.getTime()) / 86400000)
+  if (diff < 0)   return { label: 'Overdue',        color: 'var(--red)' }
+  if (diff === 0) return { label: 'Due today',       color: 'var(--red)' }
+  if (diff <= 7)  return { label: `Due in ${diff}d`, color: '#D97706'    }
+  return { label: `Due ${nextDue.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, color: 'var(--ink3)' }
+}
+
 // ── Budget tab ─────────────────────────────────────────────
 function BudgetTab() {
-  const [budgets,    setBudgets]    = useState<Budget[]>([])
-  const [spending,   setSpending]   = useState<Record<string, number>>({})
-  const [editing,    setEditing]    = useState(false)
-  const [draftAmts,  setDraftAmts]  = useState<Record<string, string>>({})
-  const [draftActive,setDraftActive]= useState<Record<string, boolean>>({})
-  const [saving,     setSaving]     = useState(false)
+  const [budgets,       setBudgets]       = useState<Budget[]>([])
+  const [spending,      setSpending]      = useState<Record<string, number>>({})
+  const [prevSpending,  setPrevSpending]  = useState<Record<string, number>>({})
+  const [recurringBills,setRecurringBills]= useState<RecurringBill[]>([])
+  const [editing,       setEditing]       = useState(false)
+  const [draftAmts,     setDraftAmts]     = useState<Record<string, string>>({})
+  const [draftActive,   setDraftActive]   = useState<Record<string, boolean>>({})
+  const [saving,        setSaving]        = useState(false)
   const month = nowMonth()
 
+  // Compute last month key
+  const now = new Date()
+  const lastMonthKey = now.getMonth() === 0
+    ? `${now.getFullYear() - 1}-12`
+    : `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`
+  const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    .toLocaleDateString('en-US', { month: 'short' })
+
   const load = useCallback(async () => {
-    const [b, s] = await Promise.all([
+    const [b, s, sp, r] = await Promise.all([
       getBudgets(),
       getCategorySpendingForMonth(month),
+      getCategorySpendingForMonth(lastMonthKey),
+      getRecurring(),
     ])
-    setBudgets(b)
-    setSpending(s)
-  }, [month])
+    setBudgets(b); setSpending(s); setPrevSpending(sp); setRecurringBills(r)
+  }, [month, lastMonthKey])
 
   useEffect(() => { load() }, [load])
 
   function startEdit() {
     const amounts: Record<string, string> = {}
-    const active: Record<string, boolean> = {}
+    const active:  Record<string, boolean> = {}
     for (const cat of CATEGORIES) {
       const b = budgets.find(b => b.category === cat)
       amounts[cat] = b ? String(b.amount) : ''
       active[cat]  = b ? b.active : false
     }
-    setDraftAmts(amounts)
-    setDraftActive(active)
-    setEditing(true)
+    setDraftAmts(amounts); setDraftActive(active); setEditing(true)
   }
 
   async function saveEdits() {
     setSaving(true)
     try {
-      await Promise.all(
-        CATEGORIES.map(cat => {
-          const amt = parseFloat(draftAmts[cat] || '0') || 0
-          const on  = draftActive[cat] ?? false
-          if (amt > 0 || on) return upsertBudget(cat, amt, on)
-          return Promise.resolve()
-        })
-      )
-      await load()
-      setEditing(false)
+      await Promise.all(CATEGORIES.map(cat => {
+        const amt = parseFloat(draftAmts[cat] || '0') || 0
+        const on  = draftActive[cat] ?? false
+        if (amt > 0 || on) return upsertBudget(cat, amt, on)
+        return Promise.resolve()
+      }))
+      await load(); setEditing(false)
     } finally { setSaving(false) }
   }
 
-  const activeBudgets = budgets.filter(b => b.active && b.amount > 0)
-  const totalBudget   = activeBudgets.reduce((s, b) => s + Number(b.amount), 0)
-  const totalSpent    = activeBudgets.reduce((s, b) => s + (spending[b.category] ?? 0), 0)
-  const overallPct    = totalBudget > 0 ? Math.min((totalSpent / totalBudget) * 100, 100) : 0
-  const monthName     = new Date(Number(month.slice(0,4)), Number(month.slice(5,7))-1, 1)
+  // Derived values
+  const activeBudgets   = budgets.filter(b => b.active && b.amount > 0)
+  const totalBudget     = activeBudgets.reduce((s, b) => s + Number(b.amount), 0)
+  const totalSpent      = activeBudgets.reduce((s, b) => s + (spending[b.category] ?? 0), 0)
+  const prevTotalSpent  = activeBudgets.reduce((s, b) => s + (prevSpending[b.category] ?? 0), 0)
+  const overallPct      = totalBudget > 0 ? Math.min((totalSpent / totalBudget) * 100, 100) : 0
+  const prevOverallPct  = totalBudget > 0 ? Math.min((prevTotalSpent / totalBudget) * 100, 100) : 0
+  const monthName       = new Date(Number(month.slice(0,4)), Number(month.slice(5,7))-1, 1)
     .toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const recurringMonthly = recurringBills.reduce((s, b) => s + toMonthlyAmount(b), 0)
+  const variableSpent    = Object.values(spending).reduce((s, v) => s + v, 0)
+  const prevVariableSpent= Object.values(prevSpending).reduce((s, v) => s + v, 0)
+  const totalMonthly     = variableSpent + recurringMonthly
+  const variableDelta    = prevVariableSpent > 0 ? variableSpent - prevVariableSpent : null
+
+  // Renders one line of last-month comparison text below a bar
+  function CompareText({ current, prev }: { current: number; prev: number }) {
+    if (prev === 0) return <span style={{fontSize:11,color:'var(--ink3)'}}>No data for {lastMonthName}</span>
+    const diff = current - prev
+    if (Math.abs(diff) < 0.5) return <span style={{fontSize:11,color:'var(--ink3)'}}>= same as {lastMonthName}</span>
+    if (diff < 0) return (
+      <span style={{fontSize:11,color:'var(--green)',fontWeight:500}}>
+        ↓ {money(Math.abs(diff))} less than {lastMonthName} ({money(prev)})
+      </span>
+    )
+    return (
+      <span style={{fontSize:11,color:'var(--red)',fontWeight:500}}>
+        ↑ {money(diff)} more than {lastMonthName} ({money(prev)})
+      </span>
+    )
+  }
+
+  // Gray tick mark at previous-month % position on bar track
+  function TickMark({ prevAmt, limit }: { prevAmt: number; limit: number }) {
+    if (prevAmt <= 0 || limit <= 0) return null
+    const tickPct = Math.min((prevAmt / limit) * 100, 100)
+    return (
+      <div style={{
+        position:'absolute', top:0, bottom:0,
+        left:`${tickPct}%`, width:2, background:'var(--ink3)',
+        borderRadius:1, zIndex:2,
+      }}/>
+    )
+  }
 
   return (
     <div>
@@ -346,10 +415,41 @@ function BudgetTab() {
         </button>
       </div>
 
+      {/* Three summary cards with deltas */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:20}}>
+        <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'12px 14px'}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>Variable spend</div>
+          <div style={{fontSize:20,fontWeight:700,fontFamily:'var(--mono)'}}>{money(variableSpent)}</div>
+          {totalBudget > 0 && <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>of {money(totalBudget)} budget</div>}
+          {variableDelta !== null && (
+            <div style={{fontSize:11,fontWeight:500,marginTop:3,color: variableDelta<0?'var(--green)':variableDelta>0?'var(--red)':'var(--ink3)'}}>
+              {variableDelta<0 ? `↓ ${money(Math.abs(variableDelta))} vs ${lastMonthName}` : variableDelta>0 ? `↑ ${money(variableDelta)} vs ${lastMonthName}` : `= same as ${lastMonthName}`}
+            </div>
+          )}
+        </div>
+        <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'12px 14px'}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>Fixed bills</div>
+          <div style={{fontSize:20,fontWeight:700,fontFamily:'var(--mono)'}}>{money(recurringMonthly)}</div>
+          <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{recurringBills.length} bills this month</div>
+          <div style={{fontSize:11,color:'var(--ink3)',marginTop:3}}>= same as {lastMonthName}</div>
+        </div>
+        <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'12px 14px'}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>Total outflow</div>
+          <div style={{fontSize:20,fontWeight:700,fontFamily:'var(--mono)'}}>{money(totalMonthly)}</div>
+          {totalBudget > 0 && <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>of ~{money(totalBudget + recurringMonthly)} planned</div>}
+          {variableDelta !== null && (
+            <div style={{fontSize:11,fontWeight:500,marginTop:3,color: variableDelta<0?'var(--green)':variableDelta>0?'var(--red)':'var(--ink3)'}}>
+              {variableDelta<0 ? `↓ ${money(Math.abs(variableDelta))} vs ${lastMonthName}` : variableDelta>0 ? `↑ ${money(variableDelta)} vs ${lastMonthName}` : `= same as ${lastMonthName}`}
+            </div>
+          )}
+        </div>
+      </div>
+
       {editing ? (
+        /* ── Edit panel ── */
         <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'16px 18px',marginBottom:16}}>
           <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:12}}>
-            Set monthly limits
+            Variable spending limits
           </div>
           {CATEGORIES.map(cat => (
             <div key={cat} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:'1px solid var(--border)'}}>
@@ -367,9 +467,7 @@ function BudgetTab() {
               <div style={{flex:1}}/>
               <span style={{fontSize:13,color:'var(--ink3)'}}>$</span>
               <input
-                type="number"
-                step="10"
-                min="0"
+                type="number" step="10" min="0"
                 value={draftAmts[cat] ?? ''}
                 onChange={e => {
                   setDraftAmts(p => ({...p, [cat]: e.target.value}))
@@ -380,11 +478,34 @@ function BudgetTab() {
               />
             </div>
           ))}
+
+          {/* Read-only fixed bills in edit panel */}
+          {recurringBills.length > 0 && (
+            <>
+              <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginTop:20,marginBottom:10}}>
+                Fixed bills — from Recurring
+              </div>
+              {recurringBills.map(b => (
+                <div key={b.id} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:'1px solid var(--border)'}}>
+                  <span style={{width:8,height:8,borderRadius:'50%',flexShrink:0,background:CATEGORY_COLORS[b.category]?.color??'var(--ink3)'}}/>
+                  <span style={{fontSize:13,flex:1,color:'var(--ink2)'}}>{b.name}</span>
+                  <span style={{fontSize:12,fontFamily:'var(--mono)',color:'var(--ink3)'}}>{money(toMonthlyAmount(b))}/mo</span>
+                  <span style={{fontSize:10,fontWeight:600,color:'var(--ink3)',background:'var(--cream2)',padding:'1px 7px',borderRadius:999}}>locked</span>
+                </div>
+              ))}
+              <div style={{fontSize:11,color:'var(--ink3)',marginTop:10,fontStyle:'italic'}}>
+                Edit these amounts in Expenses → Recurring
+              </div>
+            </>
+          )}
         </div>
       ) : (
         <>
+          {/* ── Variable spending section ── */}
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Variable spending</div>
+
           {activeBudgets.length === 0 ? (
-            <div className="empty" style={{padding:'40px 24px'}}>
+            <div className="empty" style={{padding:'40px 24px',marginBottom:24}}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
               </svg>
@@ -393,56 +514,128 @@ function BudgetTab() {
             </div>
           ) : (
             <>
-              {/* Master overview */}
-              <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'16px 18px',marginBottom:16}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+              {/* Overall variable bar */}
+              <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'14px 18px',marginBottom:10}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:6}}>
                   <div style={{fontSize:13,fontWeight:600}}>Overall</div>
-                  <div style={{fontSize:13,fontFamily:'var(--mono)'}}>
-                    <span style={{fontWeight:600}}>{money(totalSpent)}</span>
-                    <span style={{color:'var(--ink3)'}}> / {money(totalBudget)}</span>
+                  <div style={{textAlign:'right'}}>
+                    <div style={{fontSize:13,fontFamily:'var(--mono)'}}>
+                      <span style={{fontWeight:600}}>{money(totalSpent)}</span>
+                      <span style={{color:'var(--ink3)'}}> / {money(totalBudget)}</span>
+                    </div>
+                    {prevTotalSpent > 0 && <div style={{fontSize:11,color:'var(--ink3)'}}>Last month: {money(prevTotalSpent)} spent</div>}
                   </div>
                 </div>
-                <div className="progress-bar" style={{height:8,borderRadius:4}}>
-                  <div className="progress-fill" style={{
-                    width:`${overallPct}%`,height:'100%',borderRadius:4,
-                    background: overallPct >= 100 ? 'var(--red)' : overallPct >= 75 ? '#F59E0B' : 'var(--green)',
+                <div style={{position:'relative',height:8,borderRadius:4,background:'var(--cream3)'}}>
+                  <div style={{
+                    position:'absolute',top:0,left:0,height:'100%',borderRadius:4,
+                    width:`${overallPct}%`,
+                    background: overallPct>=100?'var(--red)':overallPct>=75?'#F59E0B':'var(--green)',
                   }}/>
+                  <TickMark prevAmt={prevTotalSpent} limit={totalBudget}/>
+                </div>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:5}}>
+                  <span style={{fontSize:11,color:'var(--ink3)'}}>
+                    {money(totalBudget - totalSpent)} remaining · {overallPct.toFixed(0)}%
+                  </span>
+                  {prevTotalSpent > 0 && (
+                    <span style={{fontSize:11,color:'var(--ink3)'}}>
+                      | = last month at {prevOverallPct.toFixed(0)}%
+                    </span>
+                  )}
                 </div>
               </div>
 
-              {/* Per-category rows */}
-              <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',overflow:'hidden'}}>
+              {/* Per-category variable bars */}
+              <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',overflow:'hidden',marginBottom:24}}>
                 {activeBudgets.map(b => {
-                  const spent = spending[b.category] ?? 0
-                  const pct   = b.amount > 0 ? (spent / b.amount) * 100 : 0
-                  const over  = pct > 100
+                  const spent    = spending[b.category] ?? 0
+                  const prev     = prevSpending[b.category] ?? 0
+                  const pct      = b.amount > 0 ? (spent / b.amount) * 100 : 0
+                  const over     = pct > 100
                   const barColor = pct >= 100 ? 'var(--red)' : pct >= 75 ? '#F59E0B' : 'var(--green)'
                   return (
                     <div key={b.category} style={{padding:'12px 18px',borderBottom:'1px solid var(--border)'}}>
                       <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
-                        <span style={{
-                          width:8,height:8,borderRadius:'50%',flexShrink:0,
-                          background: CATEGORY_COLORS[b.category]?.color ?? 'var(--green)',
-                        }}/>
+                        <span style={{width:8,height:8,borderRadius:'50%',flexShrink:0,background:CATEGORY_COLORS[b.category]?.color??'var(--green)'}}/>
                         <span style={{fontSize:13,fontWeight:500,flex:1}}>{CATEGORY_LABELS[b.category]}</span>
-                        <span style={{fontSize:12,fontFamily:'var(--mono)',color: over ? 'var(--red)' : 'var(--ink2)'}}>
+                        <span style={{fontSize:12,fontFamily:'var(--mono)',color:over?'var(--red)':'var(--ink2)'}}>
                           {money(spent)} <span style={{color:'var(--ink3)'}}>/ {money(b.amount)}</span>
                         </span>
-                        <span style={{fontSize:11,fontWeight:600,color: over ? 'var(--red)' : 'var(--ink3)',minWidth:34,textAlign:'right'}}>
+                        <span style={{fontSize:11,fontWeight:600,color:over?'var(--red)':'var(--ink3)',minWidth:34,textAlign:'right'}}>
                           {pct.toFixed(0)}%
                         </span>
                       </div>
-                      <div style={{position:'relative'}}>
-                        <div className="progress-bar" style={{height:6,borderRadius:3}}>
-                          <div className="progress-fill" style={{
-                            width:`${Math.min(pct, 100)}%`,height:'100%',borderRadius:3,background:barColor,
-                          }}/>
-                        </div>
-                        {over && (
-                          <span style={{position:'absolute',right:0,top:-1,fontSize:10,color:'var(--red)',fontWeight:700}}>
-                            +{money(spent - b.amount)}
-                          </span>
-                        )}
+                      <div style={{position:'relative',height:6,borderRadius:3,background:'var(--cream3)'}}>
+                        <div style={{position:'absolute',top:0,left:0,height:'100%',borderRadius:3,width:`${Math.min(pct,100)}%`,background:barColor}}/>
+                        {over && <span style={{position:'absolute',right:0,top:-1,fontSize:10,color:'var(--red)',fontWeight:700}}>+{money(spent-b.amount)}</span>}
+                        <TickMark prevAmt={prev} limit={b.amount}/>
+                      </div>
+                      <div style={{marginTop:4}}>
+                        <CompareText current={spent} prev={prev}/>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
+
+          {/* ── Fixed bills section ── */}
+          {recurringBills.length > 0 && (
+            <>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em'}}>Fixed bills</div>
+                <span style={{fontSize:11,color:'var(--ink3)'}}>auto-filled from Recurring</span>
+              </div>
+
+              {/* Fixed overall bar — numerator = sum of paid bills only */}
+              {(() => {
+                const paidTotal   = recurringBills.reduce((s, b) => s + (b.paidThisCycle ? toMonthlyAmount(b) : 0), 0)
+                const paidPct     = recurringMonthly > 0 ? (paidTotal / recurringMonthly) * 100 : 0
+                const allPaid     = Math.abs(paidTotal - recurringMonthly) < 0.01
+                return (
+                  <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'14px 18px',marginBottom:10}}>
+                    <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
+                      <div style={{fontSize:13,fontWeight:600}}>Overall</div>
+                      <div style={{textAlign:'right'}}>
+                        <span style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:600,color:'#1D4ED8'}}>{money(paidTotal)}</span>
+                        <span style={{fontSize:13,fontFamily:'var(--mono)',color:'var(--ink3)'}}> / {money(recurringMonthly)}</span>
+                        <div style={{fontSize:11,color:'var(--ink3)'}}>committed monthly</div>
+                      </div>
+                    </div>
+                    <div style={{height:8,borderRadius:4,background:'#DBEAFE'}}>
+                      <div style={{height:'100%',width:`${paidPct}%`,borderRadius:4,background:'#1D4ED8',transition:'width .3s'}}/>
+                    </div>
+                    <div style={{marginTop:5,fontSize:11,fontWeight:600,color: allPaid ? '#1D4ED8' : 'var(--ink3)'}}>
+                      {allPaid ? 'Fully committed' : `${money(recurringMonthly - paidTotal)} not yet paid this cycle`}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Per-bill rows */}
+              <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',overflow:'hidden'}}>
+                {recurringBills.map(b => {
+                  const due    = billBadge(b)
+                  const barPct = b.paidThisCycle ? 100 : 0
+                  return (
+                    <div key={b.id} style={{padding:'12px 18px',borderBottom:'1px solid var(--border)'}}>
+                      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:6}}>
+                        <span style={{width:8,height:8,borderRadius:'50%',flexShrink:0,background:CATEGORY_COLORS[b.category]?.color??'var(--ink3)'}}/>
+                        <span style={{fontSize:13,fontWeight:500,flex:1}}>{b.name}</span>
+                        <span style={{
+                          fontSize:10,fontWeight:600,padding:'2px 8px',borderRadius:999,flexShrink:0,
+                          background: b.paidThisCycle ? 'var(--green-bg)' : due.color==='var(--red)' ? 'var(--red-bg)' : due.color==='#D97706' ? '#FEF3C7' : 'var(--cream2)',
+                          color: due.color,
+                        }}>{due.label}</span>
+                        <span style={{fontSize:13,fontFamily:'var(--mono)',fontWeight:600,flexShrink:0}}>{money(b.amount)}</span>
+                      </div>
+                      <div style={{height:4,borderRadius:2,background:'#DBEAFE'}}>
+                        <div style={{height:'100%',width:`${barPct}%`,borderRadius:2,background:'#1D4ED8',transition:'width .3s'}}/>
+                      </div>
+                      <div style={{marginTop:4,fontSize:11,color: b.paidThisCycle ? 'var(--green)' : 'var(--ink3)',fontWeight: b.paidThisCycle ? 500 : 400}}>
+                        {b.paidThisCycle ? 'Paid this cycle' : 'Not yet paid this cycle'}
                       </div>
                     </div>
                   )
@@ -472,13 +665,17 @@ function RecurringOverview() {
   if (bills.length === 0) return null
 
   return (
-    <div style={{background:'var(--cream2)',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'12px 18px',marginBottom:16,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-      <div style={{display:'flex',alignItems:'baseline',gap:10,flexWrap:'wrap'}}>
-        <span style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em'}}>Recurring</span>
-        <span style={{fontSize:16,fontWeight:700,fontFamily:'var(--mono)'}}>${monthly.toFixed(2)}<span style={{fontSize:11,fontWeight:400,color:'var(--ink3)'}}>/mo</span></span>
-        <span style={{fontSize:12,color:'var(--ink3)'}}>{bills.length} bill{bills.length!==1?'s':''} · see full breakdown in</span>
+    <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'14px 18px',marginBottom:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,flexWrap:'wrap'}}>
+        <div>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:4}}>Fixed monthly obligations</div>
+          <div style={{display:'flex',alignItems:'baseline',gap:8}}>
+            <span style={{fontSize:22,fontWeight:700,fontFamily:'var(--mono)'}}>${monthly.toFixed(2)}<span style={{fontSize:12,fontWeight:400,color:'var(--ink3)'}}>/mo</span></span>
+            <span style={{fontSize:12,color:'var(--ink3)'}}>{bills.length} recurring bill{bills.length!==1?'s':''}</span>
+          </div>
+        </div>
+        <a href="/recurring" style={{fontSize:13,fontWeight:600,color:'var(--green)',textDecoration:'none',flexShrink:0,whiteSpace:'nowrap',padding:'6px 14px',border:'1px solid var(--green)',borderRadius:'var(--r)'}}>View details →</a>
       </div>
-      <a href="/recurring" style={{fontSize:13,fontWeight:600,color:'var(--green)',textDecoration:'none',flexShrink:0,whiteSpace:'nowrap'}}>Recurring tab →</a>
     </div>
   )
 }
@@ -682,21 +879,23 @@ function AnalyticsTab({ stats }: { stats: Stats }) {
     }).finally(() => setYoyLoading(false))
   }, [showYoY, stats.byMonth])
 
-  // Compute store trends from byMonth data grouped by brand
-  function storeTrend(brandKey: string): { dir: 'up' | 'down' | 'stable'; pct: number } | null {
-    if (stats.byMonth.length < 2) return null
-    // Simple heuristic: compare last month vs month before in receipts list
-    const brandReceipts = stats.receipts.filter((r: any) => r.brand === brandKey && Number(r.total) > 0)
+  // Compute store trends — compare most recent month vs previous month for that store.
+  // Requires 3+ receipts total; avoids false ↓95% from near-zero prior-period spend.
+  function storeTrend(storeName: string): { dir: 'up' | 'down' | 'stable'; pct: number } | null {
+    const storeReceipts = stats.receipts.filter(
+      (r: any) => r.store_name.toLowerCase().trim() === storeName.toLowerCase().trim() && Number(r.total) > 0
+    )
+    if (storeReceipts.length < 3) return null
     const byMonth: Record<string, number> = {}
-    for (const r of brandReceipts) {
+    for (const r of storeReceipts) {
       const m = r.purchase_date.slice(0, 7)
       byMonth[m] = (byMonth[m] ?? 0) + Number(r.total)
     }
     const mths = Object.keys(byMonth).sort()
     if (mths.length < 2) return null
-    const last = byMonth[mths[mths.length-1]]
-    const prev = byMonth[mths[mths.length-2]]
-    if (!prev) return null
+    const last = byMonth[mths[mths.length - 1]]
+    const prev = byMonth[mths[mths.length - 2]]
+    if (!prev || prev < 1) return null
     const pct = ((last - prev) / prev) * 100
     if (pct > 10)  return { dir: 'up',   pct }
     if (pct < -10) return { dir: 'down', pct: Math.abs(pct) }
@@ -744,7 +943,7 @@ function AnalyticsTab({ stats }: { stats: Stats }) {
         <div className="summary-card">
           <div className="summary-card-title">By store</div>
           {stats.byBrand.map(b => {
-            const trend = storeTrend(b.brand)
+            const trend = storeTrend(b.name)
             return (
               <div key={b.name} className="brand-row-s">
                 <div style={{flex:1,marginRight:12}}>
@@ -819,51 +1018,6 @@ function AnalyticsTab({ stats }: { stats: Stats }) {
       {/* Heatmap */}
       <SpendingHeatmap />
 
-      {/* Receipt list */}
-      <div style={{marginTop:24,marginBottom:8}}>
-        <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:10}}>
-          Receipts in this period
-        </div>
-      </div>
-      <div className="tbl-wrap">
-        <table className="spending-table">
-          <thead>
-            <tr>
-              <th>Store</th>
-              <th>Date</th>
-              <th>Paid by</th>
-              <th style={{textAlign:'right'}}>Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stats.receipts.map(r => (
-              <tr key={r.id}>
-                <td>
-                  <div style={{fontWeight:500}}>{r.store_name}</div>
-                  {r.location && <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{r.location}</div>}
-                </td>
-                <td style={{fontSize:12,color:'var(--ink2)'}}>
-                  {fmt(r.purchase_date)}
-                  {r.purchase_time ? <><br/><span style={{fontSize:11}}>{r.purchase_time.slice(0,5)}</span></> : ''}
-                </td>
-                <td>
-                  {r.paid_by ? (
-                    <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:999,whiteSpace:'nowrap',background:PAYER_COLORS[r.paid_by]?.bg??'var(--cream2)',color:PAYER_COLORS[r.paid_by]?.color??'var(--ink2)'}}>
-                      {r.paid_by}
-                    </span>
-                  ) : <span style={{color:'var(--ink3)',fontSize:12}}>—</span>}
-                </td>
-                <td style={{textAlign:'right'}}>
-                  <div style={{fontFamily:'var(--mono)',fontWeight:500}}>{money(Number(r.total))}</div>
-                  <div style={{fontSize:11,marginTop:2}}>
-                    <Link href={`/receipts/${r.id}`} style={{color:'var(--green)',fontWeight:500,textDecoration:'none'}}>View →</Link>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   )
 }
@@ -921,7 +1075,7 @@ export default function SpendingPage() {
       {showDigest && <MonthlyDigest onDismiss={dismissDigest} />}
 
       <div className="pg-head">
-        <span className="pg-title">Spending</span>
+        <span className="pg-title">Finance</span>
         <span className="pg-sub">
           {stats ? `${stats.receiptCount} receipt${stats.receiptCount !== 1 ? 's' : ''}` : ''}
         </span>

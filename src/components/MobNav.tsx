@@ -4,19 +4,15 @@ import { usePathname } from 'next/navigation'
 
 const links = [
   {
-    href: '/receipts', label: 'Receipts',
+    href: '/expenses', label: 'Expenses', also: '/receipts',
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
   },
   {
-    href: '/spending', label: 'Spending',
+    href: '/finance', label: 'Finance',
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
   },
   {
-    href: '/recurring', label: 'Recurring',
-    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-  },
-  {
-    href: '/items', label: 'Items',
+    href: '/prices', label: 'Prices',
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
   },
   {
@@ -39,12 +35,15 @@ export default function MobNav() {
 
       <nav className="mobnav" aria-label="Mobile navigation">
         <div className="mobtabs">
-          {links.map(l => (
-            <Link key={l.href} href={l.href} className={`mobtab ${path.startsWith(l.href) ? 'active' : ''}`}>
-              {l.icon}
-              <span>{l.label}</span>
-            </Link>
-          ))}
+          {links.map(l => {
+            const active = path.startsWith(l.href) || (l.also ? path.startsWith(l.also) : false)
+            return (
+              <Link key={l.href} href={l.href} className={`mobtab ${active ? 'active' : ''}`}>
+                {l.icon}
+                <span>{l.label}</span>
+              </Link>
+            )
+          })}
         </div>
       </nav>
     </>

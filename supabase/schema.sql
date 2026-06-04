@@ -139,9 +139,9 @@ create table recurring (
   category     text          not null default 'other',
   -- Same values as receipts.category
   notes        text,
-  last_paid_at timestamptz,
   active       boolean       not null default true,
   created_at   timestamptz   default now()
+  -- last_paid_at removed: paid status is computed from recurring_payments at read time
 );
 
 
@@ -300,6 +300,10 @@ create unique index receipts_unique_notxn
 -- );
 -- alter table recurring disable row level security;
 -- create index if not exists on recurring(active);
+
+-- ── Remove last_paid_at (new cycle-window design, v1.4+) ──
+-- ALTER TABLE recurring DROP COLUMN IF EXISTS last_paid_at;
+-- ALTER TABLE recurring DROP COLUMN IF EXISTS paid_this_cycle; -- if it was ever added
 
 -- ── Rename a household member ──────────────────────────────
 -- UPDATE receipts      SET paid_by  = 'NewName' WHERE paid_by  = 'OldName';

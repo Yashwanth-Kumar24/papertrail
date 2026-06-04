@@ -23,61 +23,37 @@ function toMonthly(bill: RecurringBill): number {
   return bill.amount
 }
 
-// ── Compute next due date ──────────────────────────────────
-function nextDueDate(bill: RecurringBill, from: Date): Date | null {
-  if (bill.frequency === 'monthly' && bill.due_day) {
-    const d = new Date(from.getFullYear(), from.getMonth(), bill.due_day)
-    return d > from ? d : new Date(from.getFullYear(), from.getMonth() + 1, bill.due_day)
-  }
-  if (bill.frequency === 'annual' && bill.due_date) {
-    const base = new Date(bill.due_date + 'T00:00:00')
-    const thisYear = new Date(from.getFullYear(), base.getMonth(), base.getDate())
-    return thisYear > from ? thisYear : new Date(from.getFullYear() + 1, base.getMonth(), base.getDate())
-  }
-  if (bill.frequency === 'quarterly' && bill.due_date) {
-    const d = new Date(bill.due_date + 'T00:00:00')
-    while (d <= from) d.setMonth(d.getMonth() + 3)
-    return d
-  }
-  if (bill.frequency === 'weekly') return new Date(from.getTime() + 7 * 86400000)
-  return null
-}
-
-// ── Derived due info ───────────────────────────────────────
+// ── Derived due info — reads pre-computed fields from getRecurring() ──────────
 function getDueInfo(bill: RecurringBill): { label: string; color: string; daysUntil: number | null } {
-  const now = new Date(); now.setHours(0, 0, 0, 0)
-  const next = nextDueDate(bill, now)
-
-  // Paid this cycle = payment is after the previous due date
-  let paidThisCycle = false
-  if (bill.last_paid_at && next) {
-    const paid = new Date(bill.last_paid_at); paid.setHours(0, 0, 0, 0)
-    let prevDue: Date
-    if      (bill.frequency === 'monthly')   prevDue = new Date(next.getFullYear(), next.getMonth() - 1, next.getDate())
-    else if (bill.frequency === 'annual')    prevDue = new Date(next.getFullYear() - 1, next.getMonth(), next.getDate())
-    else if (bill.frequency === 'quarterly') prevDue = new Date(next.getTime() - 90 * 86400000)
-    else                                     prevDue = new Date(now.getTime() - 7 * 86400000)
-    paidThisCycle = paid >= prevDue
-  }
-
-  if (paidThisCycle && bill.last_paid_at) {
-    const paid = new Date(bill.last_paid_at)
-    if (next) {
-      const d = Math.round((next.getTime() - now.getTime()) / 86400000)
-      if (d === 0) return { label: 'Next due today', color: '#D97706', daysUntil: 0 }
-      if (d <= 3)  return { label: `Next due in ${d}d`, color: '#D97706', daysUntil: d }
+  // Paid this cycle: always show green paid badge, never amber warning
+  if (bill.paidThisCycle && bill.cyclePayment) {
+    const paid = new Date(bill.cyclePayment.paid_at)
+    return {
+      label: `Paid · ${paid.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      color: 'var(--green)',
+      daysUntil: null,
     }
-    return { label: `Paid · ${paid.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`, color:'var(--green)', daysUntil:null }
   }
 
-  if (bill.frequency === 'weekly' && !bill.due_date) return { label:'Due weekly', color:'var(--ink3)', daysUntil:7 }
-  if (!next) return { label:'No due date', color:'var(--ink3)', daysUntil:null }
+  // Unpaid: compute days until next due date (= day after cycleEnd)
+  if (!bill.cycleEnd) {
+    if (bill.frequency === 'weekly') return { label: 'Due weekly', color: 'var(--ink3)', daysUntil: 7 }
+    return { label: 'No due date', color: 'var(--ink3)', daysUntil: null }
+  }
 
-  const diff = Math.round((next.getTime() - now.getTime()) / 86400000)
-  if (diff === 0) return { label:'Due today',       color:'var(--red)',  daysUntil:0 }
-  if (diff < 0)   return { label:'Overdue',         color:'var(--red)',  daysUntil:diff }
-  if (diff <= 7)  return { label:`Due in ${diff}d`, color:'#D97706',    daysUntil:diff }
-  return { label:`Due ${next.toLocaleDateString('en-US',{month:'short',day:'numeric'})}`, color:'var(--ink3)', daysUntil:diff }
+  const now     = new Date(); now.setHours(0, 0, 0, 0)
+  const nextDue = new Date(bill.cycleEnd + 'T00:00:00')
+  nextDue.setDate(nextDue.getDate() + 1) // cycleEnd is last day of cycle; next due = day after
+
+  const diff = Math.round((nextDue.getTime() - now.getTime()) / 86400000)
+  if (diff < 0)   return { label: 'Overdue',          color: 'var(--red)',  daysUntil: diff }
+  if (diff === 0) return { label: 'Due today',         color: 'var(--red)',  daysUntil: 0    }
+  if (diff <= 7)  return { label: `Due in ${diff}d`,   color: '#D97706',     daysUntil: diff }
+  return {
+    label: `Due ${nextDue.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+    color: 'var(--ink3)',
+    daysUntil: diff,
+  }
 }
 
 // ── Payment history section ────────────────────────────────
@@ -113,7 +89,7 @@ function PaymentHistory({ bill, onChanged }: { bill: RecurringBill; onChanged: (
   }
 
   async function handleDelete(paymentId: string) {
-    await deleteRecurringPayment(paymentId, bill.id)
+    await deleteRecurringPayment(paymentId)
     await load()
     onChanged()
     setConfirmDel(null)
@@ -506,10 +482,16 @@ export default function RecurringPage() {
 
   // Stats
   const monthly    = bills.reduce((s,b)=>s+toMonthly(b),0)
-  const dueSoonCnt = bills.filter(b=>{const d=getDueInfo(b);return d.daysUntil!==null&&d.daysUntil>=0&&d.daysUntil<=3&&!d.label.startsWith('Paid')}).length
+  const dueSoonCnt = bills.filter(b => {
+    const d = getDueInfo(b)
+    return !b.paidThisCycle && d.daysUntil !== null && d.daysUntil >= 0 && d.daysUntil <= 3
+  }).length
 
   // Sections
-  const dueSoon  = bills.filter(b=>{const d=getDueInfo(b);return d.daysUntil!==null&&d.daysUntil>=0&&d.daysUntil<=3&&!d.label.startsWith('Paid')})
+  const dueSoon = bills.filter(b => {
+    const d = getDueInfo(b)
+    return !b.paidThisCycle && d.daysUntil !== null && d.daysUntil >= 0 && d.daysUntil <= 3
+  })
   const monthly_ = bills.filter(b=>b.frequency==='monthly'&&!dueSoon.includes(b))
   const annual_  = bills.filter(b=>b.frequency==='annual' &&!dueSoon.includes(b))
   const other_   = bills.filter(b=>!['monthly','annual'].includes(b.frequency)&&!dueSoon.includes(b))

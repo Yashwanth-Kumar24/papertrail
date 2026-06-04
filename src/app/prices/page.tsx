@@ -172,7 +172,7 @@ function ItemsPageContent() {
   return (
     <main className="page">
       <div className="pg-head">
-        <span className="pg-title">Items</span>
+        <span className="pg-title">Prices</span>
         <span className="pg-sub">
           {mode === 'search' ? 'Search across all receipts' : `${returns.length} return opportunit${returns.length !== 1 ? 'ies' : 'y'} found`}
         </span>

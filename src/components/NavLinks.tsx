@@ -3,11 +3,10 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
 const links = [
-  { href: '/receipts',  label: 'Receipts'  },
-  { href: '/spending',  label: 'Spending'  },
-  { href: '/recurring', label: 'Recurring' },
-  { href: '/items',     label: 'Items'     },
-  { href: '/needs',     label: 'Needs'     },
+  { href: '/expenses', label: 'Expenses', also: '/receipts' },
+  { href: '/finance',  label: 'Finance'  },
+  { href: '/prices',   label: 'Prices'   },
+  { href: '/needs',    label: 'Needs'    },
 ]
 
 export default function NavLinks() {
@@ -15,11 +14,14 @@ export default function NavLinks() {
   return (
     <>
       <nav className="navlinks">
-        {links.map(l => (
-          <Link key={l.href} href={l.href} className={`nl ${path.startsWith(l.href) ? 'active' : ''}`}>
-            {l.label}
-          </Link>
-        ))}
+        {links.map(l => {
+          const active = path.startsWith(l.href) || (l.also ? path.startsWith(l.also) : false)
+          return (
+            <Link key={l.href} href={l.href} className={`nl ${active ? 'active' : ''}`}>
+              {l.label}
+            </Link>
+          )
+        })}
       </nav>
       <Link href="/scan" className="nav-cta">+ New scan</Link>
     </>

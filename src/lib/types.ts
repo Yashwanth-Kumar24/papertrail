@@ -93,13 +93,17 @@ export interface RecurringBill {
   amount: number
   frequency: 'monthly' | 'annual' | 'weekly' | 'quarterly'
   due_day?: number      // day of month for monthly (1-31)
-  due_date?: string     // specific date for annual (YYYY-MM-DD)
+  due_date?: string     // specific date for annual/quarterly (YYYY-MM-DD)
   paid_by: string
   category: string
   notes?: string
-  last_paid_at?: string
   active: boolean
   created_at: string
+  // Computed by getRecurring() — not stored in DB
+  paidThisCycle?: boolean
+  cycleStart?: string   // ISO date YYYY-MM-DD
+  cycleEnd?: string     // ISO date YYYY-MM-DD (last day of current cycle, inclusive)
+  cyclePayment?: { paid_at: string; paid_by: string; amount: number } | null
 }
 
 // Colors assigned by position — index 0 = first name in NEXT_PUBLIC_PAYERS, etc.
