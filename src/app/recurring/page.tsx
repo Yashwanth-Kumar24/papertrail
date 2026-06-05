@@ -192,7 +192,7 @@ function BillCard({ bill, onEdit, onPaid, onUnpaid }: {
   onUnpaid: (id: string) => void
 }) {
   const due    = getDueInfo(bill)
-  const isPaid = due.label.startsWith('Paid')
+  const isPaid = bill.paidThisCycle ?? false
   const [picking,  setPicking]  = useState(false)
   const [paidDate, setPaidDate] = useState(todayISO())
 
@@ -261,7 +261,7 @@ function BillCard({ bill, onEdit, onPaid, onUnpaid }: {
 }
 
 // ── Add/Edit form ──────────────────────────────────────────
-const BLANK: Omit<RecurringBill,'id'|'created_at'|'last_paid_at'> = {
+const BLANK: Omit<RecurringBill,'id'|'created_at'|'paidThisCycle'|'cycleStart'|'cycleEnd'|'cyclePayment'> = {
   name:'',amount:0,frequency:'monthly',due_day:undefined,due_date:undefined,
   paid_by:PAYERS[0]??'',category:'other',notes:'',active:true,
 }
