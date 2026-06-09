@@ -163,7 +163,7 @@ function ItemsPageContent() {
 
   function enterReturns() {
     setMode('returns')
-    router.replace('/items?mode=returns')
+    router.replace('/prices?mode=returns')
     if (returns.length > 0) return
     setRetLoading(true)
     getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
@@ -181,7 +181,7 @@ function ItemsPageContent() {
       {/* Mode toggle */}
       <div style={{display:'flex',gap:8,marginBottom:16}}>
         <button
-          onClick={() => { setMode('search'); router.replace(query ? `/items?q=${encodeURIComponent(query)}` : '/items') }}
+          onClick={() => { setMode('search'); router.replace(query ? `/prices?q=${encodeURIComponent(query)}` : '/prices') }}
           style={{
             fontSize:13,padding:'6px 16px',borderRadius:999,border:'1px solid var(--border2)',
             background: mode === 'search' ? 'var(--green)' : 'transparent',
@@ -220,7 +220,7 @@ function ItemsPageContent() {
                   const value = e.target.value
                   setQuery(value)
                   run(value)
-                  router.replace(value ? `/items?q=${encodeURIComponent(value)}` : '/items')
+                  router.replace(value ? `/prices?q=${encodeURIComponent(value)}` : '/prices')
                 }}
                 placeholder="Name, item code, or price (e.g. 11.99)…"
                 autoComplete="off"
