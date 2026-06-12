@@ -169,7 +169,7 @@ FINAL RULES
 3. Item names should be readable: "KS ORG CINNA" not "KS*ORG*CINNA"
 4. quantity defaults to 1 for all items unless explicitly shown otherwise.
 5. All prices are positive numbers. discount_amount is positive (not negative).
-6. If the same item appears twice with same code and price, keep both rows — it was bought twice.
+6. If the same item appears on two separate lines (even with same code and price), emit TWO separate rows — do NOT merge them or increase quantity. Only use quantity > 1 when the receipt itself prints a multi-quantity indicator like "2 @", "2 x", or "2 EA" on a single line.
 7. Return an empty items array [] rather than omitting it if no items found.`
 
 export async function POST(req: NextRequest) {
