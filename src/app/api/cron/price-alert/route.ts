@@ -17,6 +17,17 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // ── Skip if no receipts added in the last 7 days ────────
+    const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
+    const { count: recentCount } = await supabase
+      .from('receipts')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', since)
+
+    if (!recentCount) {
+      return NextResponse.json({ ok: true, sent: 0, reason: 'no new receipts this week' })
+    }
+
     // ── Count return candidates ─────────────────────────────
     const { data: items, error: itemErr } = await supabase
       .from('item_purchase_history')
