@@ -62,14 +62,12 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
   if (!open) return null
 
   return (
-    {/* Outer: fixed backdrop that scrolls */}
     <div style={{
       position: 'fixed', inset: 0, zIndex: 9999,
       background: 'rgba(0,0,0,0.5)',
       overflowY: 'auto',
       overflowX: 'hidden',
     }}>
-      {/* Inner: full-height flex centering wrapper */}
       <div style={{
         minHeight: '100%',
         display: 'flex',
