@@ -5,7 +5,8 @@
       "Bash(Remove-Item -Recurse -Force .next -ErrorAction SilentlyContinue)",
       "Bash(npm run *)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/finance)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/expenses)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3001/expenses)",
+      "Bash(curl -s https://papertrail-home.vercel.app/api/cron/price-alert -H 'Authorization: Bearer randomkeyAIzaSyAOkT_w76b8bo9BdrHpY8h1adDcy3MyE6s')"
     ]
   }
 }

@@ -131,8 +131,9 @@ function ItemsPageContent() {
   const [results,  setResults]  = useState<ItemHistory[]>([])
   const [loading,  setLoading]  = useState(false)
   const [searched, setSearched] = useState(false)
-  const [returns,  setReturns]  = useState<ItemHistory[]>([])
+  const [returns,    setReturns]    = useState<ItemHistory[]>([])
   const [retLoading, setRetLoading] = useState(false)
+  const [retFilter,  setRetFilter]  = useState('')
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -284,6 +285,20 @@ function ItemsPageContent() {
 
           {!retLoading && returns.length > 0 && (
             <>
+              <div className="search-wrap" style={{marginBottom:12}}>
+                <div className="sinput">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <input
+                    value={retFilter}
+                    onChange={e => setRetFilter(e.target.value)}
+                    placeholder="Filter by item name…"
+                    autoComplete="off"
+                  />
+                  {retFilter && (
+                    <button onClick={() => setRetFilter('')} style={{background:'none',border:'none',cursor:'pointer',color:'var(--ink3)',fontSize:16,padding:'0 4px'}}>×</button>
+                  )}
+                </div>
+              </div>
               <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
                 These items are cheaper now than a previous purchase. Bring the linked receipt to get a refund or rebuy at the lower price. Green days = likely within return window.
               </div>
@@ -300,9 +315,12 @@ function ItemsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {returns.map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
+                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
                   </tbody>
                 </table>
+                {retFilter && returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase())).length === 0 && (
+                  <p style={{textAlign:'center',color:'var(--ink3)',fontSize:13,padding:'24px 0'}}>No items match &ldquo;{retFilter}&rdquo;</p>
+                )}
               </div>
             </>
           )}
