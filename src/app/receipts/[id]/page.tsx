@@ -1,9 +1,12 @@
 'use client'
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useParams, useRouter } from 'next/navigation'
 import { getReceiptById, deleteReceipt, updateReceipt, replaceReceiptItems } from '@/lib/queries'
 import type { Receipt, ReceiptItem } from '@/lib/types'
 import { PAYER_COLORS, PAYERS, BRAND_LABELS, CATEGORIES, CATEGORY_LABELS, CATEGORY_COLORS } from '@/lib/types'
+
+const Barcode = dynamic(() => import('react-barcode'), { ssr: false })
 
 const fmt   = (iso: string) => new Date(iso + 'T00:00:00')
   .toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' })
@@ -493,6 +496,33 @@ export default function ReceiptDetail() {
         <div style={{marginTop:16,padding:'12px 16px',background:'var(--cream2)',borderRadius:'var(--r)',display:'flex',gap:10,alignItems:'flex-start'}}>
           <span style={{fontSize:16,flexShrink:0}}>📝</span>
           <span style={{fontSize:13,color:'var(--ink2)',lineHeight:1.5}}>{receipt.notes}</span>
+        </div>
+      )}
+
+      {/* Costco barcode — show at checkout instead of opening the Costco app */}
+      {receipt.source === 'costco_api' && receipt.transaction_id && (
+        <div style={{marginTop:24}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink2)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:12}}>
+            Costco Barcode
+          </div>
+          <div style={{background:'#fff',borderRadius:12,border:'1px solid var(--border)',padding:'24px 20px',display:'inline-flex',flexDirection:'column',alignItems:'center',gap:8}}>
+            <Barcode
+              value={receipt.transaction_id}
+              format="CODE128"
+              width={2}
+              height={80}
+              displayValue={false}
+              margin={0}
+              background="#fff"
+              lineColor="#1a1a1a"
+            />
+            <span style={{fontSize:11,color:'var(--ink3)',fontFamily:'var(--mono)',letterSpacing:'.05em'}}>
+              {receipt.transaction_id}
+            </span>
+          </div>
+          <p style={{fontSize:12,color:'var(--ink3)',marginTop:8}}>
+            Show this to the Costco cashier instead of opening the Costco app.
+          </p>
         </div>
       )}
 
