@@ -14,7 +14,7 @@ A personal household receipt tracker — scan any store receipt, extract items w
 | **v1.1** | Household | Paid by, Needs list, PWA, push notifications, price alerts, receipt editing, batch delete |
 | **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field |
 | **v1.3** | Finance layer | Categories, budget system, recurring bills, spending sub-tabs, heatmap, analytics upgrades, monthly digest |
-| **v1.4** | UX + Engagement | Nav restructure, recurring redesign, barcode display, share receipts, weekly price alert push, spending export, onboarding modal, `?` help button |
+| **v1.4** | UX + Engagement | Nav restructure, recurring redesign, barcode display, share receipts, weekly price alert push, spending export, onboarding modal |
 | **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(future scope)* |
 
 ---
@@ -66,7 +66,6 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 
 ### Other
 - **Onboarding modal** — shown once on first visit; summarises the 5 main features; dismissed with "Let's go →" and never shown again
-- **`?` help button** — always-visible in the top-right corner of the header; re-opens the feature overview at any time with a "Got it" dismiss and a `×` close button
 - **Push notifications** — household members get a push notification when someone saves a new receipt (title, store, total)
 - **PWA** — installable on Android and iOS; runs fullscreen like a native app
 
@@ -76,7 +75,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 
 | Layer | Choice |
 |---|---|
-| Framework | Next.js 15 (App Router, TypeScript) |
+| Framework | Next.js 16 (App Router, TypeScript) |
 | Styling | Plain CSS with CSS variables, warm cream aesthetic |
 | Fonts | Manrope (sans), DM Mono (monospace) |
 | OCR | Google Cloud Vision API (server-side) |

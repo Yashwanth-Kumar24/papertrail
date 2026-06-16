@@ -1,2 +1,2 @@
-import { redirect } from 'next/navigation'
-export default function Home() { redirect('/receipts') }
+// Root redirect is handled by next.config.js redirects()
+export default function RootPage() { return null }

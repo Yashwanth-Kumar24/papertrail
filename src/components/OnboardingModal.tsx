@@ -1,4 +1,5 @@
 'use client'
+import { useState, useEffect } from 'react'
 
 const FEATURES = [
   {
@@ -50,16 +51,21 @@ const FEATURES = [
   },
 ]
 
-interface Props {
-  open:    boolean
-  onClose: () => void
-  // isFirstVisit: true → "Welcome" title + "Let's go →" button (no × in corner)
-  //               false → "How PaperTrail works" title + "Got it" button + × in corner
-  isFirstVisit?: boolean
-}
+export default function OnboardingModal() {
+  const [show, setShow] = useState(false)
 
-export default function OnboardingModal({ open, onClose, isFirstVisit = false }: Props) {
-  if (!open) return null
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (localStorage.getItem('onboarding-done')) return
+    setShow(true)
+  }, [])
+
+  function dismiss() {
+    localStorage.setItem('onboarding-done', '1')
+    setShow(false)
+  }
+
+  if (!show) return null
 
   return (
     <div style={{
@@ -76,93 +82,66 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
         padding: '24px 16px',
         boxSizing: 'border-box',
       }}>
-      <div style={{
-        background: 'var(--cream)',
-        borderRadius: 16,
-        width: '100%',
-        maxWidth: 520,
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '0 24px 64px rgba(0,0,0,0.22)',
-      }}>
-        {/* Header */}
         <div style={{
-          padding: '24px 28px 18px',
-          borderBottom: '1px solid var(--border)',
-          flexShrink: 0,
+          background: 'var(--cream)',
+          borderRadius: 16,
+          width: '100%',
+          maxWidth: 520,
+          overflow: 'hidden',
           display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 12,
+          flexDirection: 'column',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.22)',
         }}>
-          <div>
-            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-              <img
-                src="/icon-192.png" alt="PaperTrail"
-                width={28} height={28}
-                style={{borderRadius:6}}
-                onError={e => (e.currentTarget.style.display='none')}
-              />
-              <span style={{fontSize:18,fontWeight:700,color:'var(--ink)'}}>
-                {isFirstVisit ? 'Welcome to PaperTrail' : 'How PaperTrail works'}
-              </span>
+          <div style={{
+            padding: '24px 28px 18px',
+            borderBottom: '1px solid var(--border)',
+            flexShrink: 0,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <img src="/icon-192.png" alt="" width={28} height={28} style={{ borderRadius: 6 }} onError={e => (e.currentTarget.style.display = 'none')} />
+              <span style={{ fontSize: 18, fontWeight: 700, color: 'var(--ink)' }}>Welcome to PaperTrail</span>
             </div>
-            <p style={{fontSize:13,color:'var(--ink2)',margin:0,lineHeight:1.5}}>
+            <p style={{ fontSize: 13, color: 'var(--ink2)', margin: 0, lineHeight: 1.5 }}>
               Your household receipt tracker — here&apos;s what makes it worth opening every time you shop.
             </p>
           </div>
-          {!isFirstVisit && (
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                fontSize: 22, lineHeight: 1, color: 'var(--ink3)',
-                padding: '0 2px', flexShrink: 0,
-              }}
-            >×</button>
-          )}
-        </div>
 
-        {/* Feature list */}
-        <div style={{padding:'20px 28px',display:'flex',flexDirection:'column',gap:20}}>
-          {FEATURES.map(f => (
-            <div key={f.title}>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                <span style={{fontSize:18}}>{f.icon}</span>
-                <span style={{fontSize:14,fontWeight:700,color:'var(--ink)'}}>{f.title}</span>
+          <div style={{ padding: '20px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {FEATURES.map(f => (
+              <div key={f.title}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 18 }}>{f.icon}</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>{f.title}</span>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 20, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {f.points.map(p => (
+                    <li key={p} style={{ fontSize: 13, color: 'var(--ink2)', lineHeight: 1.5 }}>{p}</li>
+                  ))}
+                </ul>
               </div>
-              <ul style={{margin:0,paddingLeft:20,display:'flex',flexDirection:'column',gap:4}}>
-                {f.points.map(p => (
-                  <li key={p} style={{fontSize:13,color:'var(--ink2)',lineHeight:1.5}}>{p}</li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
-        {/* Footer */}
-        <div style={{
-          padding: '16px 28px',
-          borderTop: '1px solid var(--border)',
-          flexShrink: 0,
-          display: 'flex',
-          justifyContent: 'flex-end',
-        }}>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'var(--green)', color: '#fff',
-              border: 'none', borderRadius: 8,
-              padding: '10px 28px', fontSize: 14, fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'var(--sans)',
-            }}
-          >
-            {isFirstVisit ? "Let's go →" : 'Got it'}
-          </button>
+          <div style={{
+            padding: '16px 28px',
+            borderTop: '1px solid var(--border)',
+            flexShrink: 0,
+            display: 'flex',
+            justifyContent: 'flex-end',
+          }}>
+            <button
+              onClick={dismiss}
+              style={{
+                background: 'var(--green)', color: '#fff',
+                border: 'none', borderRadius: 8,
+                padding: '10px 28px', fontSize: 14, fontWeight: 600,
+                cursor: 'pointer', fontFamily: 'var(--sans)',
+              }}
+            >
+              {"Let's go →"}
+            </button>
+          </div>
         </div>
-      </div>
       </div>
     </div>
   )

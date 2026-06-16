@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from 'next'
 import { Manrope, DM_Mono } from 'next/font/google'
 import './globals.css'
-import NavLinks      from '@/components/NavLinks'
-import MobNav        from '@/components/MobNav'
-import SwRegister    from '@/components/SwRegister'
-import NotifyBanner  from '@/components/NotifyBanner'
-import HelpButton    from '@/components/HelpButton'
+import NavLinks        from '@/components/NavLinks'
+import MobNav          from '@/components/MobNav'
+import SwRegister      from '@/components/SwRegister'
+import NotifyBanner    from '@/components/NotifyBanner'
+import OnboardingModal from '@/components/OnboardingModal'
 import Link from 'next/link'
 import { Analytics } from '@vercel/analytics/next'
 
@@ -46,9 +46,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </Link>
           <NavLinks />
-          <HelpButton />
         </header>
         <NotifyBanner />
+        <OnboardingModal />
 
         {children}
         <MobNav />
