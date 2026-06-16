@@ -34,7 +34,7 @@ export default function HelpButton() {
         aria-label="Help — how PaperTrail works"
         title="How PaperTrail works"
         style={{
-          marginLeft: 'auto',
+          marginLeft: '10px',
           background: 'none',
           border: '1.5px solid var(--border2)',
           cursor: 'pointer',

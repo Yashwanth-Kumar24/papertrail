@@ -62,26 +62,31 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
   if (!open) return null
 
   return (
+    {/* Outer: fixed backdrop that scrolls */}
     <div style={{
-      position: 'fixed', inset: 0, zIndex: 1000,
-      background: 'rgba(0,0,0,0.45)',
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(0,0,0,0.5)',
       overflowY: 'auto',
-      WebkitOverflowScrolling: 'touch',
-      padding: '24px 16px',
-      display: 'flex',
-      alignItems: 'flex-start',
-      justifyContent: 'center',
+      overflowX: 'hidden',
     }}>
+      {/* Inner: full-height flex centering wrapper */}
+      <div style={{
+        minHeight: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px 16px',
+        boxSizing: 'border-box',
+      }}>
       <div style={{
         background: 'var(--cream)',
         borderRadius: 16,
         width: '100%',
-        maxWidth: 560,
+        maxWidth: 520,
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
-        margin: 'auto',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.22)',
       }}>
         {/* Header */}
         <div style={{
@@ -159,6 +164,7 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
             {isFirstVisit ? "Let's go →" : 'Got it'}
           </button>
         </div>
+      </div>
       </div>
     </div>
   )
