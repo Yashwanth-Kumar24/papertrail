@@ -325,6 +325,20 @@ export default function ReceiptDetail() {
               {receipt.transaction_id && (
                 <div className="meta-row"><span className="meta-label">Txn ID</span><span className="meta-val" style={{fontSize:12}}>{receipt.transaction_id}</span></div>
               )}
+              {receipt.source === 'costco_api' && (
+                <div className="meta-row">
+                  <span className="meta-label">Receipt</span>
+                  <a
+                    href="https://www.costco.com/myaccount/#/app/4900eb1f-0c10-4bd9-99c3-c59e6c1ecebf/ordersandpurchases"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Opens Costco orders page — find this receipt by date"
+                    style={{fontSize:12,color:'#005DAA',textDecoration:'none',display:'inline-flex',alignItems:'center',gap:4,fontWeight:500}}
+                  >
+                    View on Costco ↗
+                  </a>
+                </div>
+              )}
               <div className="meta-row"><span className="meta-label">Items</span><span>{items.length}</span></div>
               {discounted.length > 0 && (
                 <div className="meta-row">
