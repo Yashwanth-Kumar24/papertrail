@@ -291,7 +291,7 @@ function ItemsPageContent() {
                   <input
                     value={retFilter}
                     onChange={e => setRetFilter(e.target.value)}
-                    placeholder="Filter by item name…"
+                    placeholder="Filter by name or item code…"
                     autoComplete="off"
                   />
                   {retFilter && (
@@ -315,10 +315,10 @@ function ItemsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
+                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
                   </tbody>
                 </table>
-                {retFilter && returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase())).length === 0 && (
+                {retFilter && returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())).length === 0 && (
                   <p style={{textAlign:'center',color:'var(--ink3)',fontSize:13,padding:'24px 0'}}>No items match &ldquo;{retFilter}&rdquo;</p>
                 )}
               </div>
