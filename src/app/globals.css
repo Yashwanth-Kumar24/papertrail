@@ -483,3 +483,63 @@ input:focus, select:focus { border-color: var(--green); }
     transform: rotate(45deg);
   }
 }
+
+/* ── Print / Export styles ─────────────────────────────────── */
+@media print {
+  /* Hide all navigation and interactive chrome */
+  .topnav,
+  .mob-nav,
+  .date-pills,
+  .no-print,
+  button,
+  a[href]:not(.print-link) {
+    display: none !important;
+  }
+
+  html, body {
+    background: #fff;
+    color: #000;
+    font-size: 12px;
+  }
+
+  .page {
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Print header injected by ExportButton */
+  .print-header {
+    display: block !important;
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #000;
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(4, 1fr);
+    break-inside: avoid;
+  }
+
+  .stat-card,
+  .summary-card {
+    border: 1px solid #ccc;
+    break-inside: avoid;
+    background: #fff;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr 1fr;
+    break-inside: avoid;
+  }
+
+  .bar-bg, .bar-fill {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* Footer on every page */
+  @page {
+    margin: 16mm;
+  }
+}

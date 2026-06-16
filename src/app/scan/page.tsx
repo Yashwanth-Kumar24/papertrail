@@ -96,15 +96,15 @@ export default function ScanPage() {
       setParsed(prev => {
         const merged = prev ? mergeReceipts(prev, result) : result
         setItems(merged.line_items)
-        if (!prev) {
-          setEditStore(merged.store.name ?? '')
-          setLocation(merged.store.location ?? '')
-          setEditDate(merged.purchase_date ?? '')
-          setEditTime(merged.purchase_time ?? '')
-          setEditTotal(merged.total != null ? String(merged.total) : '')
-          setEditTax(merged.tax   != null ? String(merged.tax)   : '')
-          setEditCategory(suggestCategory(merged.store.brand))
-        }
+        // Always update header fields — on first scan to populate them,
+        // on subsequent scans to reflect the merged receipt (store, total, etc.)
+        setEditStore(merged.store.name ?? '')
+        setLocation(merged.store.location ?? '')
+        setEditDate(merged.purchase_date ?? '')
+        setEditTime(merged.purchase_time ?? '')
+        setEditTotal(merged.total != null ? String(merged.total) : '')
+        setEditTax(merged.tax   != null ? String(merged.tax)   : '')
+        if (!prev) setEditCategory(suggestCategory(merged.store.brand))
         return merged
       })
       setStep('review')
@@ -133,11 +133,21 @@ export default function ScanPage() {
     setItems(prev => prev.map((item, i) => {
       if (i !== idx) return item
       if (field === 'name' || field === 'item_code') return { ...item, [field]: value }
-      if (field === 'final_price' || field === 'original_price') {
-        const num = parseFloat(value) || 0
-        return { ...item, original_price: num, final_price: num, discount_amount: 0 }
+      const num = parseFloat(value) || 0
+      if (field === 'original_price') {
+        // Keep final_price, recalculate discount so the invariant holds
+        const disc = Math.max(0, num - item.final_price)
+        return { ...item, original_price: num, discount_amount: disc }
       }
-      return item
+      if (field === 'final_price') {
+        // Keep original_price, recalculate discount
+        const disc = Math.max(0, item.original_price - num)
+        return { ...item, final_price: Math.max(0, num), discount_amount: disc }
+      }
+      if (field === 'quantity') {
+        return { ...item, quantity: Math.max(1, Math.round(num)) }
+      }
+      return { ...item, [field]: num }
     }))
   }
 

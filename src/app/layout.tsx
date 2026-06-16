@@ -5,6 +5,7 @@ import NavLinks      from '@/components/NavLinks'
 import MobNav        from '@/components/MobNav'
 import SwRegister    from '@/components/SwRegister'
 import NotifyBanner  from '@/components/NotifyBanner'
+import HelpButton    from '@/components/HelpButton'
 import Link from 'next/link'
 import { Analytics } from '@vercel/analytics/next'
 
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
           </Link>
           <NavLinks />
+          <HelpButton />
         </header>
         <NotifyBanner />
 

@@ -12,8 +12,9 @@ A personal household receipt tracker — scan any store receipt, extract items w
 |---|---|---|
 | **v1.0** | AI Core | OCR + GPT-4o-mini parsing, spending analytics, brand normalization |
 | **v1.1** | Household | Paid by, Needs list, PWA, push notifications, price alerts, receipt editing, batch delete |
-| **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field, back-button fix for price alerts |
+| **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field |
 | **v1.3** | Finance layer | Categories, budget system, recurring bills, spending sub-tabs, heatmap, analytics upgrades, monthly digest |
+| **v1.4** | UX + Engagement | Nav restructure, recurring redesign, barcode display, share receipts, weekly price alert push, spending export, onboarding modal, `?` help button |
 | **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(future scope)* |
 
 ---
@@ -27,68 +28,47 @@ A personal household receipt tracker — scan any store receipt, extract items w
 - **Category** — auto-suggested from the store brand (e.g. Costco → Groceries, CVS → Pharmacy); always editable
 - **Notes** — optional free-text field up to 280 characters (e.g. "birthday dinner", "work reimbursement")
 - **Manual entry** — no receipt? Tap "No receipt? Enter manually" to type everything in by hand
-- **Multi-section scanning** — long receipt? Scan in sections; items merge automatically with deduplication
+- **Multi-section scanning** — long receipt? Scan in sections; items merge automatically; header fields (store, date, total) update on each scan
 - **Paid by** — required on every receipt; tracks which household member paid
 
-### Receipts
-- Browse all receipts in a card grid — store name, date, payer pill, category pill, savings, total
-- Filter by store, date, payer, source (Scanned / Manual / Costco Import), and **category** — all coordinated
-- **Sort** — Newest first / Oldest first / $ High→Low / $ Low→High
-- **Batch select** — check multiple receipts and delete them all at once (select across all pages)
-- Paginated (20 per page) with "Load more"
-- Stats bar: total receipts, total spent, line items count, total saved
-- **Edit** any saved receipt — store, brand, date, total, tax, paid by, category, notes, and every line item
+### Expenses
+Two sub-tabs under a single nav item:
 
-### Spending
-Three sub-tabs, all respect the date range selector (This week / This month / Last 3 months / This year / All time):
+- **Receipts** — browse all receipts in a card grid; filter by store, date preset or custom range, payer, source, and category (all coordinated); sort by date or amount; batch-select and delete; paginated with stats bar
+- **Recurring** — track rent, subscriptions, utilities on monthly / annual / weekly / quarterly schedules; mark paid per cycle; full payment history log
+
+### Receipts (detail)
+- Edit any saved receipt — store, brand, date, total, tax, paid by, category, notes, and every line item
+- **Share** — tap ↑ to open the native share sheet (iOS/Android) or copy the link to clipboard (desktop); recipient opens the URL directly with no login required
+- **Costco receipts** — "View on Costco ↗" link opens the Costco orders page; scannable **Code 128 barcode** rendered from the transaction ID — show it to the cashier instead of opening the Costco app
+
+### Finance
+Three sub-tabs, all respect the date range selector (This week / This month / Last 3 months / This year / All time / Custom):
 
 - **Summary** — key metrics (total spent, receipt count, avg per trip, total saved), top categories by spend, top 5 stores ranked, top 3 biggest receipts, payer split showing receipts + recurring payments side by side, recurring bills obligation card
-- **Analytics** — by-payer bars, by-store bars with trend arrows (↑/↓/→ vs prior period), by-month bars with year-over-year toggle (overlay last year's data), daily spending calendar heatmap (tap a day to see all receipts for that date)
-- **Budget** — set monthly dollar limits per category; master overview bar + per-category progress bars (green → amber at 75% → red at 100%); inline edit panel
-- **Monthly digest** — appears at the top of Spending in the first week of each new month; shows last month's total with delta, top 3 categories, biggest receipt; dismissible
+- **Analytics** — by-payer bars, by-store bars with trend arrows (↑/↓/→ vs prior period, minimum 3 receipts), by-month bars with year-over-year toggle, daily spending calendar heatmap (tap a day to see all receipts); **↓ Export** button generates a print-ready PDF summary respecting the active date filter
+- **Budget** — Variable spend section: category progress bars with last-month comparison tick marks and delta text; Fixed bills section: per-bill paid/unpaid bars; three summary cards (Variable / Fixed / Total outflow)
+- **Monthly digest** — appears at the top of Finance in the first week of each new month; shows last month's total with delta, top 3 categories, biggest receipt; dismissible
 
-### Items
+### Prices
 - Search any item by name, item code, or price across all receipts
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- **↑ Price alerts mode** — one tap shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt; days since expensive purchase shown
-- Back button from a receipt detail returns to price alerts mode (not search)
-- Grouping: item code when available (reliable across stores); name-only items scoped to the same store
-
-### Recurring
-- Track rent, subscriptions, utilities — anything paid on a fixed schedule
-- Frequencies: monthly, annual, weekly, quarterly; set a due day or date per bill
-- **Paid cycle** — auto-resets when the next due date arrives; shows amber "Next due in 3d" warning 3 days before
-- **Mark as paid** — pick the date (allows backdating) and who paid this cycle; updates the payment log
-- **Undo** — tap the green check to un-mark and roll back the payment record
-- **Payment history** — full log of every payment per bill: who paid, when, how much; add past payments manually; delete individual entries
-- Analytics: by-category bar chart of monthly obligations + full breakdown table
-- Mobile: accessible from the bottom nav; Scan moves to a green floating action button above the nav
-
-### Costco import
-- Accessible from the Receipts page header (blue Costco button)
-- Paste a Bearer token from browser DevTools: Network tab → any `graphql` request → `costco-x-authorization` header
-- Browse receipts by quarter (up to 10 quarters back); click any row to preview full item detail
-- Batch-select receipts and import in one click — already-saved receipts are skipped automatically
-- Return receipts (refunds) imported with negative totals and REFUND badge; excluded from price tracking
-- Full warehouse address stored in proper case (e.g. `800 Heights Blvd, Florence, KY`)
-- Per-unit prices stored correctly for multi-unit line items; instant savings merged as discounts
-- One push notification per import batch, not per receipt
-- Token lives in sessionStorage only — never written to the database
+- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt
+- **Weekly push notification** — every Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
 ### Needs
 - Shared household shopping list synced via Supabase
 - Add items tagged with who added them (color-coded by payer)
-- Tap the circle to mark done — item moves to a "Done" section
-- Tap a done item to undo
-- Done items auto-clear after 2 hours (configurable)
+- Tap the circle to mark done — item moves to a "Done" section with undo
+- Done items auto-clear after 2 hours
 - List re-syncs whenever the browser tab regains focus
 
 ### Other
+- **Onboarding modal** — shown once on first visit; summarises the 5 main features; dismissed with "Let's go →" and never shown again
+- **`?` help button** — always-visible in the top-right corner of the header; re-opens the feature overview at any time with a "Got it" dismiss and a `×` close button
 - **Push notifications** — household members get a push notification when someone saves a new receipt (title, store, total)
-- **Monthly digest push** — sent in the first week of each month with last month's spending recap *(planned)*
 - **PWA** — installable on Android and iOS; runs fullscreen like a native app
-- **Favicon + app icon** — green receipt icon in browser tabs and on home screen
 
 ---
 
@@ -103,7 +83,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 | AI parsing | OpenAI GPT-4o-mini (server-side) |
 | Database | Supabase Postgres |
 | Storage | Supabase Storage (receipt images) |
-| Hosting | Vercel |
+| Hosting | Vercel (with cron jobs) |
 | Mobile | PWA — installable on Android + iOS |
 
 ---
@@ -133,6 +113,9 @@ NEXT_PUBLIC_PAYERS=Name1,Name2,Name3
 NEXT_PUBLIC_VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:you@example.com
+
+# Protects the Saturday price-alert cron endpoint
+CRON_SECRET=any-random-secret
 ```
 
 Set `NEXT_PUBLIC_USE_GOOGLE_OCR=false` to fall back to Tesseract.js (free, runs in browser, less accurate).
@@ -165,6 +148,11 @@ VAPID keys (for push notifications):
 npx web-push generate-vapid-keys
 ```
 
+Generate a cron secret (any random string):
+```
+openssl rand -hex 32
+```
+
 **5. Run locally**
 ```
 npm run dev
@@ -195,6 +183,7 @@ Add these in Vercel → Project → Settings → Environment Variables:
 | `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | your VAPID public key | All |
 | `VAPID_PRIVATE_KEY` | your VAPID private key | Production + Preview |
 | `VAPID_SUBJECT` | `mailto:you@example.com` | All |
+| `CRON_SECRET` | your random secret | Production + Preview |
 
 Redeploy once after adding env vars. Future deploys are automatic on every `git push`.
 
@@ -206,36 +195,43 @@ Redeploy once after adding env vars. Future deploys are automatic on every `git 
 src/
   app/
     api/
-      ocr/route.ts         Server route — Google Vision OCR
-      parse/route.ts       Server route — OpenAI parsing
-      notify/route.ts      Server route — send push notifications to subscribers
-      subscribe/route.ts   Server route — register push notification subscriptions
-      costco/route.ts      Server route — Costco GraphQL API proxy (token forwarding)
-    sw/route.ts            Service worker — handles push events for PWA
-    receipts/              Receipt list + [id] detail + edit
-    spending/              Spending analytics with date range
-    items/                 Item search, price history, price alerts
-    needs/                 Shared household shopping list
-    costco/                Costco direct import — browse by quarter, batch import
-    recurring/             Recurring bills — track, mark paid, payment history
-    scan/                  Scan flow — capture, OCR, review, save, manual entry
-    layout.tsx             Root layout — nav, metadata, PWA manifest link
-    manifest.ts            PWA manifest
-    apple-icon.tsx         iOS home screen icon (180×180)
-    icon.tsx               Browser favicon (32×32)
+      ocr/route.ts              Server route — Google Vision OCR
+      parse/route.ts            Server route — OpenAI parsing
+      notify/route.ts           Server route — send push notifications
+      subscribe/route.ts        Server route — register push subscriptions
+      costco/route.ts           Server route — Costco GraphQL API proxy
+      cron/
+        price-alert/route.ts    Cron route — Saturday price alert push (protected by CRON_SECRET)
+    sw/route.ts                 Service worker — push events + notification click → deep link
+    expenses/                   Expenses shell — Receipts + Recurring sub-tabs
+    receipts/                   Receipt list + [id] detail/edit/share
+    finance/                    Finance — Summary / Analytics / Budget sub-tabs
+    prices/                     Item search, price history, price alerts
+    needs/                      Shared household shopping list
+    costco/                     Costco direct import — browse by quarter, batch import
+    recurring/                  Recurring bills — track, mark paid, payment history
+    scan/                       Scan flow — capture, OCR, review, save, manual entry
+    layout.tsx                  Root layout — nav, metadata, onboarding modal
+    manifest.ts                 PWA manifest
+    apple-icon.tsx              iOS home screen icon (180×180)
+    icon.tsx                    Browser favicon (32×32)
   components/
-    NavLinks.tsx           Desktop top nav
-    MobNav.tsx             Mobile bottom nav (≤768px)
+    NavLinks.tsx                Desktop top nav (Expenses / Finance / Prices / Needs)
+    MobNav.tsx                  Mobile bottom nav (≤768px)
+    NotifyBanner.tsx            One-time push notification opt-in banner
+    OnboardingModal.tsx         First-visit feature overview modal
+    ExportButton.tsx            Print-to-PDF export for Finance page
   lib/
-    types.ts               TypeScript interfaces + PAYERS, PAYER_COLORS, BRAND_LABELS
-    supabase.ts            Supabase client
-    queries.ts             All DB operations
-    ocr.ts                 OCR wrapper — Google Vision (with compression) or Tesseract fallback
+    types.ts                    TypeScript interfaces + PAYERS, PAYER_COLORS, BRAND_LABELS
+    supabase.ts                 Supabase client
+    queries.ts                  All DB operations + getCycleWindow()
+    ocr.ts                      OCR wrapper — Google Vision or Tesseract fallback
   parsers/
-    ai-parser.ts           AI parser — calls /api/parse, normalizes output
-    registry.ts            Entry point — parseReceipt() + mergeReceipts()
+    ai-parser.ts                AI parser — calls /api/parse, normalizes output
+    registry.ts                 parseReceipt() + mergeReceipts()
 supabase/
-  schema.sql               DB schema — run once in Supabase SQL editor
+  schema.sql                    DB schema — run once in Supabase SQL editor
+vercel.json                     Cron schedule — price alert every Saturday 9am UTC
 ```
 
 ---
@@ -271,7 +267,8 @@ budgets:
 recurring:
   id, name, amount, frequency,  -- monthly | annual | weekly | quarterly
   due_day, due_date,
-  paid_by, category, notes, last_paid_at, active, created_at
+  paid_by, category, notes, active, created_at
+  -- paid status computed at read time from recurring_payments (no last_paid_at column)
 
 recurring_payments:
   id, recurring_id, paid_by, paid_at, amount, created_at
@@ -312,6 +309,24 @@ Fallback: if `NEXT_PUBLIC_USE_GOOGLE_OCR=false`, Tesseract.js runs in the browse
 
 ---
 
+## Recurring bills — cycle window design
+
+Paid status is never stored in the database. On every load, `getRecurring()` fetches all active bills + the last 13 months of `recurring_payments` in two queries, then computes a cycle window per bill in JavaScript:
+
+- **Monthly** — cycle starts on `due_day` of the current or previous month (whichever is most recent); ends the day before the next occurrence. High due-days (29–31) clamp correctly to short months.
+- **Annual** — cycle is the 12-month window starting on the most recent anniversary of `due_date`
+- **Quarterly** — 3-month rolling window from `due_date`
+- **Weekly** — last 6 days to today
+
+A bill is `paidThisCycle` if any `recurring_payments` row falls within `[cycleStart, cycleEnd]`.
+
+To drop the old `last_paid_at` column from an existing database:
+```sql
+ALTER TABLE recurring DROP COLUMN IF EXISTS last_paid_at;
+```
+
+---
+
 ## Paid by
 
 Each receipt requires a payer selected from your household list. Members are configured via the `NEXT_PUBLIC_PAYERS` environment variable — no code changes needed.
@@ -323,13 +338,38 @@ UPDATE receipts SET paid_by = 'YourName' WHERE paid_by IS NULL;
 
 ---
 
-## Multi-section scanning
+## Sharing a receipt
 
-For long receipts (e.g. a full Costco run):
-1. Scan the top half — items extracted and shown in review
-2. Click **+ Add section** — scan the bottom half
-3. Items merge automatically, deduplicating by item code or name
-4. Metadata (transaction ID, date, total) fills in from whichever section had it
+On any receipt detail page, tap **↑** (between Edit and Delete):
+- **Mobile / PWA** — opens the native share sheet (AirDrop, Messages, WhatsApp, copy link, etc.)
+- **Desktop** — copies the direct URL to clipboard; button flashes ✓
+
+The recipient opens the link and sees the full receipt — no login required.
+
+---
+
+## Costco barcode
+
+On Costco-imported receipts, the detail page renders a scannable **Code 128 barcode** from the transaction ID. Show it to the cashier instead of opening the Costco app. The "View on Costco ↗" link opens the Costco orders page for the full receipt history.
+
+---
+
+## Weekly price alert push
+
+Every Saturday at 9am UTC, a Vercel cron job hits `/api/cron/price-alert`. It counts items where the most recent purchase is cheaper than a past purchase (return/price-match opportunities) and sends one push notification per subscriber:
+
+```
+PaperTrail · Price Alerts
+4 items may qualify for a return or price match — tap to review
+```
+
+Tapping navigates directly to `/prices?mode=returns`. If zero candidates exist, no notification is sent. The endpoint is protected by `CRON_SECRET`.
+
+---
+
+## Export spending summary
+
+On the Finance page (Summary or Analytics tab), tap **↓ Export**. The browser print dialog opens with a clean, print-optimised layout — navigation, buttons, and filters are hidden. Save as PDF. The export respects whatever date range and filters are currently active.
 
 ---
 
@@ -341,30 +381,17 @@ On the Receipts page, click the checkbox (top-right of each card) to select rece
 
 ## Push notifications
 
-When any household member saves a new receipt, all subscribed devices get a push notification showing who paid, which store, and the total. To subscribe, install the PWA and accept the notification prompt (shown automatically in the app).
+When any household member saves a new receipt, all subscribed devices get a push notification showing who paid, which store, and the total. To subscribe, install the PWA and accept the notification prompt shown automatically in the app.
 
-Implemented via the Web Push API. Subscriptions are stored in Supabase. Server-side sending via `/api/notify`.
-
----
-
-## Needs — shared shopping list
-
-The Needs tab is a shared household list synced via Supabase:
-- Add items tagged with your name (from `NEXT_PUBLIC_PAYERS`) — color-coded pills
-- Tap the circle to mark done — item moves to a "Done" section
-- Done items auto-clear after **2 hours** (configurable via `DONE_VISIBLE_HOURS` in `src/lib/queries.ts`)
-- Tap a done item's green check to undo
-- List re-syncs whenever the browser tab regains focus
+Implemented via the Web Push API. Subscriptions stored in Supabase. Server-side sending via `/api/notify`.
 
 ---
 
 ## Install as a mobile app (PWA)
 
-PaperTrail works as an installable app on both Android and iOS — no App Store needed.
-
 **Android (Chrome)**
 1. Open the app URL in Chrome
-2. Tap the **3-dot menu → Add to Home Screen** (or accept the install banner)
+2. Tap the **3-dot menu → Add to Home Screen**
 3. Tap **Install**
 
 **iOS (Safari)**
@@ -372,7 +399,7 @@ PaperTrail works as an installable app on both Android and iOS — no App Store 
 2. Tap the **Share button** (box with arrow)
 3. Tap **Add to Home Screen → Add**
 
-Once installed, the app opens fullscreen with no browser address bar, scanning uses the camera directly, and push notifications work for new receipts.
+Once installed, the app opens fullscreen, scanning uses the camera directly, and push notifications work for new receipts.
 
 ---
 
@@ -414,7 +441,7 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 ```
 
 - Up to 6 members supported
-- Colors are assigned by position: green, pink, purple, blue, amber, red
+- Colors assigned by position: green, pink, purple, blue, amber, red
 - No code changes needed — names never appear in the codebase
 - To rename a member in existing data, run the SQL in the Migration helpers section of `supabase/schema.sql`
 
@@ -422,89 +449,65 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 
 ## Release history
 
-### v1.0 — AI Core
-*First real version. Manual/basic parsing (pre-v1.0) is not tagged.*
+### v1.4 — UX + Engagement
+*Nav restructure, recurring redesign, sharing, Costco barcode, weekly push, and export.*
 
-- OpenAI GPT-4o-mini parsing — extracts items, discounts, totals from raw OCR text
-- Google Cloud Vision OCR replacing browser-based Tesseract
-- Spending analytics page with by-store breakdown
-- Brand normalization (`costco`, `walmart`, `whole-foods`, etc.)
-- Schema simplification — single receipts + receipt_items structure
-- Multiple receipt images per scan
-
----
-
-### v1.1 — Household Features
-*The app becomes a full household tool.*
-
-- **Paid by** — required payer field on every receipt; color-coded by household member
-- **Manual entry** — add a receipt without scanning (for lost/digital receipts)
-- **Needs list** — shared household shopping list, synced via Supabase, tab-focus refresh
-- **PWA** — installable on Android and iOS; fullscreen, home screen icon, favicon
-- **Push notifications** — Web Push API; all devices notified when any member saves a receipt
-- **Price alerts** — Items tab mode showing where current price is lower than a past purchase; sorted by savings opportunity, links to the return receipt
-- **Receipt editing** — edit store, date, tax, paid by, and every line item after saving
-- **Sort** — Newest / Oldest / $ High→Low / $ Low→High on Receipts page
-- **Spending by payer** — color-coded bar chart on Spending page
-- **Batch delete** — select multiple receipts (across all pages) and delete at once
-- Tax field, duplicate detection overhaul, coordinated filter dropdowns
-
----
-
-### v1.2 — Costco Import + UI Polish
-*Direct import from Costco's internal API — no scanning needed for warehouse receipts.*
-
-- **Costco direct import** — browse receipts by quarter (up to 10 quarters back), preview full item detail, batch-select and import in one click
-- **Return receipts** — negative-total receipts handled throughout; REFUND badge; return items excluded from price tracking
-- **Source tracking** — every receipt tagged `scan` / `manual` / `costco_api`; filterable on Receipts page; badge on detail view
-- **Quantity field** — multi-unit purchases store per-unit price; line total (`×qty = total`) shown on detail view
-- **Per-unit price normalization** — Costco API and OCR-scanned multi-unit items both stored at unit price for accurate cross-purchase price comparison
-- **AI parser quantity fix** — quantity extracted by AI is now saved correctly; multi-quantity discounts stored per-unit
-- **Price alerts back-button fix** — navigating to a receipt and pressing back returns to price alerts mode, not search
-- **Savings on receipt cards** — green "Saved $X.XX" shown on each card when the receipt has any discounts
-- **Costco full address** — full warehouse address stored in proper case (`800 Heights Blvd, Florence, KY`)
-- **Env-driven household members** — names and colors fully configured via `NEXT_PUBLIC_PAYERS`; no names in code
-- **Items table simplified** — Original + Discount columns merged into a single "Saved" column
-- **Txn ID removed from cards and spending table** — internal data; still visible on receipt detail view
-- **Costco selection UI** — count + Clear inline, blue import action bar; selection clears automatically after import
-- Token lives in sessionStorage only, never written to the database
+- **Nav restructure** — 4 top-level tabs: Expenses (Receipts + Recurring sub-tabs), Finance (Summary / Analytics / Budget), Prices, Needs
+- **Recurring redesign** — paid status computed from `recurring_payments` log via cycle window; no `last_paid_at` column; correct for all frequencies including edge-case due-days (29–31)
+- **Receipts date filter** — preset pills (This week / This month / Last 3 months / This year / All time / Custom) replacing single-date dropdown; matches Finance page style
+- **Coordinated filter dropdowns** — store, payer, source, category all cross-filter each other in real time
+- **Share receipt** — ↑ button on detail page; native share sheet on mobile, clipboard copy on desktop
+- **Costco barcode** — Code 128 barcode rendered on Costco receipt detail; show to cashier instead of opening the Costco app
+- **Costco "View on Costco"** — link on Costco receipt detail opening the orders page
+- **Weekly price alert push** — Vercel cron every Saturday 9am UTC; sends push only when candidates exist; deep-links to `/prices?mode=returns`
+- **↓ Export** — print-to-PDF for Finance Summary + Analytics tabs; respects active date filter; hides all chrome via `@media print`
+- **Onboarding modal** — shown once on first visit; 5-feature overview; localStorage dismiss
+- **Budget tab redesign** — Variable + Fixed sections separated; last-month comparison tick marks and delta text on every bar; three summary cards
+- **Analytics heatmap** — green palette replacing coral; "Receipts in this period" table removed
+- **Digest delta** — "↑ more than Apr" / "↓ less than Apr" phrasing replacing "vs Apr"
+- **Bug fixes** — monthly cycle overflow for due-day ≥ 29; scan page price field editing losing discount; multi-scan header fields not updating on second scan; prices page routing broken after rename
 
 ---
 
 ### v1.3 — Categories, Budget, Recurring & Analytics
 *Full household finance layer — spending context, fixed bills, and budgeting.*
 
-**Categories**
-- 11 categories across all receipts, recurring bills, and budgets: Groceries, Household, Utilities, Dining Out, Entertainment, Clothing, Electronics, Pharmacy, Insurance, Fuel, Other
-- Auto-suggested from store brand on scan (Costco → Groceries, CVS → Pharmacy, Home Depot → Household, etc.)
-- Shown as colored pills on receipt cards, receipt detail, and throughout the app
-- Filterable on the Receipts page via category pill row
-- Optional notes field (up to 280 chars) on every receipt — shown below items with a 📝 icon
+- 11 categories across receipts, recurring bills, and budgets
+- Auto-suggested category from store brand on scan
+- Spending page with 3 sub-tabs: Summary, Analytics, Budget
+- Recurring bills tab — frequencies, paid cycle, payment history, analytics
+- Monthly digest card
+- Payer split with recurring payments
+- Spending heatmap, YoY toggle, trend arrows
 
-**Spending page — 3 sub-tabs**
-- **Summary tab** (default) — key metrics, top categories, top 5 stores, top 3 biggest receipts, payer split; recurring obligation card with link to Recurring tab
-- **Analytics tab** — existing charts + per-store trend arrows (↑/↓/→), year-over-year toggle on the by-month chart, spending calendar heatmap (3-shade coral heat scale, tap a day to see receipts)
-- **Budget tab** — monthly limits per category; master overview bar + per-category progress bars (green → amber → red at 75% → 100%); inline edit panel
+---
 
-**Recurring bills tab** (new nav item)
-- Track rent, subscriptions, utilities — anything paid on a regular schedule
-- Frequencies: monthly, annual, weekly, quarterly
-- Due-date-based paid/unpaid cycle — auto-resets when next due date passes; amber "Next due in 3d" warning before reset
-- Mark as paid: date picker (allows backdating) + payer picker — records who paid this cycle
-- Undo mark-as-paid with one tap
-- Payment history per bill — full log of who paid, when, and how much; add past payments manually; delete individual entries
-- Analytics: by-category bar chart + full monthly breakdown table
-- Mobile: Scan moves to a green FAB above the nav bar; Recurring takes the freed nav slot
+### v1.2 — Costco Import + UI Polish
+*Direct import from Costco's internal API — no scanning needed for warehouse receipts.*
 
-**Payer split with recurring**
-- Spending Summary "By payer" now shows receipt spending vs recurring payments side by side with a split bar and legend
+- Costco direct import — browse by quarter, batch-select and import
+- Return receipts — negative totals, REFUND badge, excluded from price tracking
+- Source tracking — scan / manual / costco_api
+- Quantity field — per-unit prices stored correctly
+- Price alerts back-button fix
 
-**Other**
-- Monthly digest card — appears at top of Spending first week of each new month; shows last month's total, delta vs prior month, top 3 categories, biggest receipt; dismissible
-- `NEXT_PUBLIC_PAYERS` env var fully controls household members — no names anywhere in code or README
-- All store grouping fixed: same store never appears twice in spending charts regardless of brand key differences
-- Heatmap color palette: 3-shade coral (light rose → soft coral → warm red) with readable text at each level
-- Numerous bug fixes: category filter server-side pagination, recurring paid_by NOT NULL constraint on delete, unused imports removed, dynamic import replaced with static
+---
+
+### v1.1 — Household Features
+*The app becomes a full household tool.*
+
+- Paid by, Manual entry, Needs list, PWA, Push notifications
+- Price alerts, Receipt editing, Sort, Batch delete
+- Spending by payer, coordinated filter dropdowns
+
+---
+
+### v1.0 — AI Core
+*First real version.*
+
+- OpenAI GPT-4o-mini parsing, Google Cloud Vision OCR
+- Spending analytics, brand normalization
+- Multiple receipt images per scan
 
 ---
 
@@ -513,6 +516,5 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 - Multi-user support with auth (Supabase Auth or Clerk)
 - Bring Your Own Key (BYOK) for OpenAI and Google Vision
 - Docker Compose for self-hosting
-- Excel export (.xlsx) — summary sheet + one sheet per receipt with full item detail and image link
-- Dedicated return tracker view (receipt + current price side by side)
+- Excel export (.xlsx) — summary sheet + one sheet per receipt
 - Costco token auto-refresh (no manual DevTools copy)

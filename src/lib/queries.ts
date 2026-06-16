@@ -653,8 +653,13 @@ export function getCycleWindow(
     const cycleStart = today.getDate() >= day
       ? new Date(today.getFullYear(), today.getMonth(), day)
       : new Date(today.getFullYear(), today.getMonth() - 1, day)
-    // cycleEnd = day before next due_day occurrence (JS day=0 gives last day of prev month)
-    const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, day - 1)
+    // cycleEnd = day before next due_day occurrence.
+    // Use setMonth(+1) then subtract 1 day so JS clamps months correctly
+    // (e.g. due_day=31 in Jan → next due = Feb 28/29, cycleEnd = Feb 27/28).
+    const nextStart = new Date(cycleStart)
+    nextStart.setMonth(nextStart.getMonth() + 1)
+    const cycleEnd = new Date(nextStart)
+    cycleEnd.setDate(cycleEnd.getDate() - 1)
     return { cycleStart, cycleEnd }
   }
 

@@ -61,6 +61,7 @@ export default function ReceiptDetail() {
   const [loading,  setLoading]  = useState(true)
   const [confirm,  setConfirm]  = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [copied,   setCopied]   = useState(false)
   const [imgErrors, setImgErrors] = useState<Record<number, boolean>>({})
 
   // Edit state
@@ -173,6 +174,21 @@ export default function ReceiptDetail() {
   const isReturn = Number(receipt.total) < 0
   const hasQty   = items.some(i => i.quantity !== 1)
 
+  function handleShare() {
+    const r     = receipt!
+    const url   = window.location.href
+    const title = `${r.store_name} · $${Number(r.total).toFixed(2)}`
+    const text  = `${new Date(r.purchase_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · ${r.store_name} · $${Number(r.total).toFixed(2)}`
+    if (navigator.share) {
+      navigator.share({ title, text, url }).catch(() => {})
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      })
+    }
+  }
+
   const SOURCE_BADGE: Record<string, { label: string; bg: string; color: string }> = {
     scan:       { label: 'Scanned',       bg: '#E8F5EF', color: '#1D6F50' },
     manual:     { label: 'Manual Entry',  bg: 'var(--cream2)', color: 'var(--ink2)' },
@@ -211,6 +227,18 @@ export default function ReceiptDetail() {
                 style={{padding:'7px 14px',borderRadius:8,border:'1px solid var(--border2)',background:'transparent',fontSize:13,cursor:'pointer'}}
               >
                 ✏️ Edit
+              </button>
+              <button
+                onClick={handleShare}
+                title={copied ? 'Link copied!' : 'Share receipt'}
+                style={{
+                  padding:'7px 12px',borderRadius:8,border:'1px solid var(--border2)',
+                  background: copied ? 'var(--green-bg)' : 'transparent',
+                  color: copied ? 'var(--green)' : 'var(--ink2)',
+                  fontSize:15,cursor:'pointer',lineHeight:1,transition:'all .15s',
+                }}
+              >
+                {copied ? '✓' : '↑'}
               </button>
               <button
                 onClick={() => setConfirm(true)}

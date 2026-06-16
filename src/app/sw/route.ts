@@ -21,8 +21,13 @@ self.addEventListener('notificationclick', function(event) {
   var target = (event.notification.data && event.notification.data.url) || '/receipts';
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+      // If app is already open, navigate it to the target URL then focus
       for (var i = 0; i < list.length; i++) {
-        if ('focus' in list[i]) return list[i].focus();
+        var c = list[i];
+        if ('navigate' in c) {
+          return c.navigate(target).then(function(w) { return w ? w.focus() : null; });
+        }
+        if ('focus' in c) return c.focus();
       }
       return clients.openWindow(target);
     })

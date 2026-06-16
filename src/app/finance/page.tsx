@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { getSpendingStats, getDailySpending, getReceiptsByDate, getBudgets, upsertBudget, getRecurring, getRecurringPaymentsForPeriod, getCategorySpendingForMonth } from '@/lib/queries'
 import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/lib/types'
 import type { Budget, Receipt, RecurringBill } from '@/lib/types'
+import ExportButton from '@/components/ExportButton'
 
 const money    = (n: number) => `$${Number(n).toFixed(2)}`
 const fmt      = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -1097,11 +1098,22 @@ export default function SpendingPage() {
         </div>
       )}
 
-      {/* Sub-tabs */}
-      <div style={{display:'flex',gap:4,marginBottom:20,background:'var(--cream2)',borderRadius:999,padding:4,width:'fit-content'}}>
-        <SubTab label="Summary"   active={tab==='summary'}   onClick={() => setTab('summary')}/>
-        <SubTab label="Analytics" active={tab==='analytics'} onClick={() => setTab('analytics')}/>
-        <SubTab label="Budget"    active={tab==='budget'}    onClick={() => setTab('budget')}/>
+      {/* Sub-tabs + export */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,marginBottom:20,flexWrap:'wrap'}}>
+        <div style={{display:'flex',gap:4,background:'var(--cream2)',borderRadius:999,padding:4,width:'fit-content'}}>
+          <SubTab label="Summary"   active={tab==='summary'}   onClick={() => setTab('summary')}/>
+          <SubTab label="Analytics" active={tab==='analytics'} onClick={() => setTab('analytics')}/>
+          <SubTab label="Budget"    active={tab==='budget'}    onClick={() => setTab('budget')}/>
+        </div>
+        {tab !== 'budget' && stats && (
+          <ExportButton
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            preset={preset}
+            receiptCount={stats.receiptCount}
+            totalSpent={stats.totalSpent}
+          />
+        )}
       </div>
 
       {tab === 'budget' ? (
