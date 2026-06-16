@@ -34,31 +34,34 @@ export default function HelpButton() {
         aria-label="Help — how PaperTrail works"
         title="How PaperTrail works"
         style={{
+          marginLeft: 'auto',
           background: 'none',
-          border: 'none',
+          border: '1.5px solid var(--border2)',
           cursor: 'pointer',
           color: 'var(--ink3)',
-          fontSize: 18,
+          fontSize: 13,
           fontWeight: 700,
           lineHeight: 1,
-          padding: '4px 6px',
-          borderRadius: 6,
+          borderRadius: '50%',
           fontFamily: 'var(--sans)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          minWidth: 28,
-          minHeight: 28,
-          transition: 'color 0.15s, background 0.15s',
+          width: 28,
+          height: 28,
+          flexShrink: 0,
+          transition: 'color 0.15s, border-color 0.15s, background 0.15s',
         }}
         onMouseEnter={e => {
           const el = e.currentTarget
           el.style.color = 'var(--ink)'
-          el.style.background = 'var(--border)'
+          el.style.borderColor = 'var(--ink3)'
+          el.style.background = 'var(--cream3)'
         }}
         onMouseLeave={e => {
           const el = e.currentTarget
           el.style.color = 'var(--ink3)'
+          el.style.borderColor = 'var(--border2)'
           el.style.background = 'none'
         }}
       >

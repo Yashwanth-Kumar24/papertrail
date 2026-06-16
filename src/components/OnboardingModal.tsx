@@ -65,19 +65,23 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
       background: 'rgba(0,0,0,0.45)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '16px',
+      overflowY: 'auto',
+      WebkitOverflowScrolling: 'touch',
+      padding: '24px 16px',
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'center',
     }}>
       <div style={{
         background: 'var(--cream)',
         borderRadius: 16,
         width: '100%',
         maxWidth: 560,
-        maxHeight: '90vh',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+        margin: 'auto',
       }}>
         {/* Header */}
         <div style={{
@@ -119,7 +123,7 @@ export default function OnboardingModal({ open, onClose, isFirstVisit = false }:
         </div>
 
         {/* Feature list */}
-        <div style={{overflowY:'auto',padding:'20px 28px',display:'flex',flexDirection:'column',gap:20}}>
+        <div style={{padding:'20px 28px',display:'flex',flexDirection:'column',gap:20}}>
           {FEATURES.map(f => (
             <div key={f.title}>
               <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
