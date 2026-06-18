@@ -20,3 +20,6 @@ npm-debug.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code — may contain API keys from shell history
+.claude/
