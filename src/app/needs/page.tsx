@@ -45,10 +45,8 @@ export default function ListPage() {
 
   const markDone = async (id: string) => {
     const now = new Date().toISOString()
-    // Optimistic — move to done section immediately
     setItems(prev => prev.map(i => i.id === id ? { ...i, done: true, done_at: now } : i))
     try { await markShoppingItemDone(id) } catch {
-      // Revert on failure
       setItems(prev => prev.map(i => i.id === id ? { ...i, done: false, done_at: undefined } : i))
     }
   }
@@ -142,7 +140,7 @@ export default function ListPage() {
             </div>
           ))}
 
-          {/* Done items — visible for 24 hrs, tap to undo */}
+          {/* Done items — visible for 2 hrs, tap to undo */}
           {done.length > 0 && (
             <>
               <div style={{

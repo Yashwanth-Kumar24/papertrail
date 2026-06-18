@@ -449,6 +449,11 @@ export default function ReceiptsPage() {
                           </span>
                         )}
                       </div>
+                      {r.notes && (
+                        <div style={{fontSize:11,color:'var(--ink3)',fontStyle:'italic',marginTop:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                          📝 {r.notes}
+                        </div>
+                      )}
                     </div>
                     <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6,flexShrink:0,paddingLeft:12}}>
                       <button

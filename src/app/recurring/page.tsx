@@ -445,6 +445,27 @@ function RecurringAnalytics({ bills }: { bills: RecurringBill[] }) {
   )
 }
 
+// ── Module-level section — must not be defined inside render ──
+// Defining components inside render creates a new type each render,
+// causing React to unmount/remount all children on every state change.
+function BillSection({ title, items, onEdit, onPaid, onUnpaid }: {
+  title:    string
+  items:    RecurringBill[]
+  onEdit:   (b: RecurringBill) => void
+  onPaid:   (id: string, paidBy: string, paidAt: string) => void
+  onUnpaid: (id: string) => void
+}) {
+  if (!items.length) return null
+  return (
+    <div style={{marginBottom:20}}>
+      <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:10}}>{title}</div>
+      <div style={{display:'flex',flexDirection:'column',gap:8}}>
+        {items.map(b=><BillCard key={b.id} bill={b} onEdit={onEdit} onPaid={onPaid} onUnpaid={onUnpaid}/>)}
+      </div>
+    </div>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────
 export default function RecurringPage() {
   const [bills,   setBills]   = useState<RecurringBill[]>([])
@@ -496,18 +517,6 @@ export default function RecurringPage() {
   const annual_  = bills.filter(b=>b.frequency==='annual' &&!dueSoon.includes(b))
   const other_   = bills.filter(b=>!['monthly','annual'].includes(b.frequency)&&!dueSoon.includes(b))
 
-  function Section({ title, items }: { title:string; items:RecurringBill[] }) {
-    if (!items.length) return null
-    return (
-      <div style={{marginBottom:20}}>
-        <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:10}}>{title}</div>
-        <div style={{display:'flex',flexDirection:'column',gap:8}}>
-          {items.map(b=><BillCard key={b.id} bill={b} onEdit={b=>setForm({mode:'edit',bill:b})} onPaid={handlePaid} onUnpaid={handleUnpaid}/>)}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <main className="page">
       {form&&(
@@ -551,10 +560,10 @@ export default function RecurringPage() {
       ) : (
         <>
           <RecurringAnalytics bills={bills} />
-          <Section title="Due soon" items={dueSoon} />
-          <Section title="Monthly" items={monthly_} />
-          <Section title="Annual"  items={annual_} />
-          <Section title="Other"   items={other_} />
+          <BillSection title="Due soon" items={dueSoon}   onEdit={b=>setForm({mode:'edit',bill:b})} onPaid={handlePaid} onUnpaid={handleUnpaid}/>
+          <BillSection title="Monthly"  items={monthly_}  onEdit={b=>setForm({mode:'edit',bill:b})} onPaid={handlePaid} onUnpaid={handleUnpaid}/>
+          <BillSection title="Annual"   items={annual_}   onEdit={b=>setForm({mode:'edit',bill:b})} onPaid={handlePaid} onUnpaid={handleUnpaid}/>
+          <BillSection title="Other"    items={other_}    onEdit={b=>setForm({mode:'edit',bill:b})} onPaid={handlePaid} onUnpaid={handleUnpaid}/>
         </>
       )}
     </main>

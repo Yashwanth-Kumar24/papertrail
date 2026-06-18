@@ -1,12 +1,8 @@
 {
   "crons": [
-    {
-      "path": "/api/cron/price-alert",
-      "schedule": "0 9 * * 3"
-    },
-    {
-      "path": "/api/cron/price-alert",
-      "schedule": "0 9 * * 6"
-    }
+    { "path": "/api/cron/price-alert",  "schedule": "0 9 * * 3" },
+    { "path": "/api/cron/price-alert",  "schedule": "0 9 * * 6" },
+    { "path": "/api/cron/budget-alert", "schedule": "0 9 1 * *" },
+    { "path": "/api/cron/budget-alert", "schedule": "0 9 15 * *" }
   ]
 }

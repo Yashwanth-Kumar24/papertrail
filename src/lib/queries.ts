@@ -227,6 +227,13 @@ export async function deleteReceipt(id: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// ── Distinct brands present in receipts ───────────────────
+export async function getDistinctBrands(): Promise<string[]> {
+  const { data } = await supabase.from('receipts').select('brand')
+  const brands = [...new Set((data ?? []).map((r: any) => r.brand).filter(Boolean))] as string[]
+  return brands.sort()
+}
+
 // ── Search items with price history ───────────────────────
 export async function searchItems(
   query: string,
@@ -818,6 +825,7 @@ export async function getRecurringPaymentHistory(recurringId: string): Promise<R
   if (error) throw new Error(error.message)
   return (data ?? []) as RecurringPayment[]
 }
+
 
 export async function getRecurringPaymentsForPeriod(
   dateFrom?: string,

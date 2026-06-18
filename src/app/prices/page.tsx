@@ -1,9 +1,12 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems, getReturnCandidates } from '@/lib/queries'
+import { searchItems, getReturnCandidates, getDistinctBrands } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ItemHistory } from '@/lib/types'
+import { BRAND_LABELS } from '@/lib/types'
+
+const PRICES_BRAND_KEY = 'prices_brand_filter'
 
 const fmt = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
 const money = (n: number) => `$${Number(n).toFixed(2)}`
@@ -126,26 +129,43 @@ function ReturnRow({ item }: { item: ItemHistory }) {
 }
 
 function ItemsPageContent() {
-  const [mode,     setMode]     = useState<'search' | 'returns'>('search')
-  const [query,    setQuery]    = useState('')
+  const [mode,       setMode]       = useState<'search' | 'returns'>('search')
+  const [query,      setQuery]      = useState('')
+  const [brandFilter,setBrandFilter]= useState<string>(() => {
+    if (typeof window === 'undefined') return ''
+    return localStorage.getItem(PRICES_BRAND_KEY) ?? ''
+  })
   const [results,  setResults]  = useState<ItemHistory[]>([])
   const [loading,  setLoading]  = useState(false)
   const [searched, setSearched] = useState(false)
   const [returns,    setReturns]    = useState<ItemHistory[]>([])
   const [retLoading, setRetLoading] = useState(false)
   const [retFilter,  setRetFilter]  = useState('')
+  const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  useEffect(() => {
+    getDistinctBrands().then(setBrandOptions).catch(() => {})
+  }, [])
+
+  function updateBrandFilter(val: string) {
+    setBrandFilter(val)
+    localStorage.setItem(PRICES_BRAND_KEY, val)
+    if (query.trim()) run(query, val)
+  }
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  const run = useCallback((q: string) => {
+  const run = useCallback((q: string, brand?: string) => {
     if (!q.trim()) { setResults([]); setSearched(false); return }
     clearTimeout(debounce.current)
     debounce.current = setTimeout(async () => {
       setLoading(true); setSearched(true)
-      searchItems(q).then(setResults).finally(() => setLoading(false))
+      const b = brand !== undefined ? brand : brandFilter
+      searchItems(q, b || undefined).then(setResults).finally(() => setLoading(false))
     }, 350)
-  }, [debounce])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debounce, brandFilter])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -210,6 +230,22 @@ function ItemsPageContent() {
       {/* Search mode */}
       {mode === 'search' && (
         <>
+          <div style={{marginBottom:12}}>
+            <select
+              value={brandFilter}
+              onChange={e => updateBrandFilter(e.target.value)}
+              className="fsel"
+              style={{fontSize:13,padding:'6px 10px'}}
+            >
+              <option value="">All stores</option>
+              {brandOptions.filter(b => b !== 'other').map(b => (
+                <option key={b} value={b}>{BRAND_LABELS[b] ?? b}</option>
+              ))}
+              {brandOptions.includes('other') && (
+                <option value="other">Other</option>
+              )}
+            </select>
+          </div>
           <div className="search-wrap">
             <div className="sinput">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>

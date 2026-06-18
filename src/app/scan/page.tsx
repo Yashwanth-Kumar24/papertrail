@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { recognizeReceipt } from '@/lib/ocr'
 import { parseReceipt, mergeReceipts } from '@/parsers/registry'
@@ -113,6 +113,22 @@ export default function ScanPage() {
       setStep('capture')
     }
   }, [])
+
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      if (step !== 'capture') return
+      const items = Array.from(e.clipboardData?.items ?? [])
+      const imgItem = items.find(i => i.type.startsWith('image/'))
+      if (!imgItem) return
+      const file = imgItem.getAsFile()
+      if (!file) return
+      const named = new File([file], `paste.${file.type.split('/')[1] || 'png'}`, { type: file.type })
+      setImgFiles(prev => [...prev, named])
+      process(named)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [step, process])
 
   const startManual = () => {
     setParsed(BLANK_RECEIPT)
@@ -276,6 +292,9 @@ export default function ScanPage() {
                 <button className="btn-secondary btn-full" onClick={() => uploadRef.current?.click()}>
                   ↑ Upload image
                 </button>
+                <div style={{fontSize:11,color:'var(--ink3)',textAlign:'center',marginTop:4}}>
+                  or paste with Ctrl+V / ⌘V
+                </div>
               </div>
 
               {step === 'scanning' && (

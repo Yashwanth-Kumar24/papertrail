@@ -363,9 +363,9 @@ function ImportModal({
                     onClick={() => onPaidByChange(p)}
                     style={{
                       padding:'6px 16px',borderRadius:999,fontSize:13,fontWeight:600,cursor:'pointer',border:'2px solid',
-                      borderColor:  paidBy === p ? PAYER_COLORS[p].color : 'var(--border)',
-                      background:   paidBy === p ? PAYER_COLORS[p].bg    : 'transparent',
-                      color:        paidBy === p ? PAYER_COLORS[p].color  : 'var(--ink2)',
+                      borderColor:  paidBy === p ? (PAYER_COLORS[p]?.color ?? 'var(--border2)') : 'var(--border)',
+                      background:   paidBy === p ? (PAYER_COLORS[p]?.bg    ?? 'var(--cream2)') : 'transparent',
+                      color:        paidBy === p ? (PAYER_COLORS[p]?.color  ?? 'var(--ink)')   : 'var(--ink2)',
                     }}
                   >{p}</button>
                 ))}

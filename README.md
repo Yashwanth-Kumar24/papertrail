@@ -15,18 +15,19 @@ A personal household receipt tracker — scan any store receipt, extract items w
 | **v1.2** | Costco | Direct Costco API import, source tracking, return receipts, quantity field |
 | **v1.3** | Finance layer | Categories, budget system, recurring bills, spending sub-tabs, heatmap, analytics upgrades, monthly digest |
 | **v1.4** | UX + Engagement | Nav restructure, recurring redesign, barcode display, share receipts, weekly price alert push, spending export, onboarding modal |
-| **v2.0** | Multi-user | Auth, BYOK, Docker, Excel export *(future scope)* |
+| **v1.5** | Polish + Alerts | Receipt notes preview, clipboard paste on scan, prices brand filter, budget push alerts cron |
+| **v2.0** | Multi-user SaaS | Auth, households, BYOK, Docker, Excel export *(separate project)* |
 
 ---
 
 ## What it does
 
 ### Scan
-- Take a photo or upload a receipt image from any store
+- Take a photo, upload a file, or **paste an image directly from clipboard** (Ctrl+V / ⌘V) on the capture screen
 - Google Vision reads the image; OpenAI GPT-4o-mini extracts structured items, discounts, and totals
 - Review and edit every field before saving — store, location, date, time, total, tax, paid by, category, notes, items
 - **Category** — auto-suggested from the store brand (e.g. Costco → Groceries, CVS → Pharmacy); always editable
-- **Notes** — optional free-text field up to 280 characters (e.g. "birthday dinner", "work reimbursement")
+- **Notes** — optional free-text field up to 280 characters (e.g. "birthday dinner", "work reimbursement"); previewed as a single italic line on the receipt list card when non-empty
 - **Manual entry** — no receipt? Tap "No receipt? Enter manually" to type everything in by hand
 - **Multi-section scanning** — long receipt? Scan in sections; items merge automatically; header fields (store, date, total) update on each scan
 - **Paid by** — required on every receipt; tracks which household member paid
@@ -52,10 +53,11 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 
 ### Prices
 - Search any item by name, item code, or price across all receipts
+- **Store filter** — dropdown shows only stores you actually have receipts for (populated dynamically from DB, not a hardcoded list); persists across sessions via localStorage
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
 - **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt
-- **Weekly push notification** — every Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
+- **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
 ### Needs
 - Shared household shopping list synced via Supabase
@@ -113,7 +115,7 @@ NEXT_PUBLIC_VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:you@example.com
 
-# Protects the Saturday price-alert cron endpoint
+# Protects the Wednesday and Saturday price-alert cron endpoint
 CRON_SECRET=any-random-secret
 ```
 
@@ -200,7 +202,8 @@ src/
       subscribe/route.ts        Server route — register push subscriptions
       costco/route.ts           Server route — Costco GraphQL API proxy
       cron/
-        price-alert/route.ts    Cron route — Saturday price alert push (protected by CRON_SECRET)
+        price-alert/route.ts    Cron route — Wednesday and Saturday price alert push (protected by CRON_SECRET)
+        budget-alert/route.ts   Cron route — 1st and 15th of month budget push at 80% threshold (protected by CRON_SECRET)
     sw/route.ts                 Service worker — push events + notification click → deep link
     expenses/                   Expenses shell — Receipts + Recurring sub-tabs
     receipts/                   Receipt list + [id] detail/edit/share
@@ -230,7 +233,7 @@ src/
     registry.ts                 parseReceipt() + mergeReceipts()
 supabase/
   schema.sql                    DB schema — run once in Supabase SQL editor
-vercel.json                     Cron schedule — price alert every Saturday 9am UTC
+vercel.json                     Cron schedules — price alert Wed+Sat 9am UTC; budget alert 1st+15th 9am UTC
 ```
 
 ---
@@ -353,9 +356,22 @@ On Costco-imported receipts, the detail page renders a scannable **Code 128 barc
 
 ---
 
+## Budget push alerts
+
+On the 1st and 15th of each month at 9am UTC, a Vercel cron job hits `/api/cron/budget-alert`. It checks all active budgets (Finance → Budget tab) and sends a push notification if any category has reached 80% or more of its monthly budget:
+
+```
+PaperTrail · Budget Alert
+2 categories are at or near limit: groceries 87%, household 81%
+```
+
+Tapping navigates directly to `/finance`. If all categories are under 80%, no notification is sent. The endpoint is protected by `CRON_SECRET`.
+
+---
+
 ## Weekly price alert push
 
-Every Saturday at 9am UTC, a Vercel cron job hits `/api/cron/price-alert`. It counts items where the most recent purchase is cheaper than a past purchase (return/price-match opportunities) and sends one push notification per subscriber:
+Every Wednesday and Saturday at 9am UTC, a Vercel cron job hits `/api/cron/price-alert`. It counts items where the most recent purchase is cheaper than a past purchase (return/price-match opportunities) and sends one push notification per subscriber:
 
 ```
 PaperTrail · Price Alerts
@@ -448,6 +464,17 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 
 ## Release history
 
+### v1.5 — Polish + Alerts
+*Bug fixes, clipboard scan, receipt notes preview, dynamic store filter, and budget push alerts.*
+
+- **Clipboard paste on scan** — Ctrl+V / ⌘V on the capture screen pastes an image directly from clipboard; same flow as file upload
+- **Receipt notes preview** — notes field now previewed as a single italic line on receipt list cards; only shown when non-empty
+- **Prices store filter** — dropdown populated dynamically from actual receipts in DB; only stores you've visited appear; persists across sessions via localStorage; new stores auto-appear as you scan
+- **Budget push alerts** — new cron at `/api/cron/budget-alert`; runs 1st and 15th of each month; sends push when any budget category reaches 80% of monthly limit; lists all over-threshold categories in one notification; auto-cleans expired push subscriptions
+- **Bug fixes** — `Section` component in Recurring page moved to module level (was causing BillCard remount on every state change); Costco payer button crash fixed (missing optional chaining on `PAYER_COLORS`); `getSuggestedItems` guard for zero-interval items
+
+---
+
 ### v1.4 — UX + Engagement
 *Nav restructure, recurring redesign, sharing, Costco barcode, weekly push, and export.*
 
@@ -458,7 +485,7 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 - **Share receipt** — ↑ button on detail page; native share sheet on mobile, clipboard copy on desktop
 - **Costco barcode** — Code 128 barcode rendered on Costco receipt detail; show to cashier instead of opening the Costco app
 - **Costco "View on Costco"** — link on Costco receipt detail opening the orders page
-- **Weekly price alert push** — Vercel cron every Saturday 9am UTC; sends push only when candidates exist; deep-links to `/prices?mode=returns`
+- **Weekly price alert push** — Vercel cron every Wednesday and Saturday 9am UTC; sends push only when candidates exist; deep-links to `/prices?mode=returns`
 - **↓ Export** — print-to-PDF for Finance Summary + Analytics tabs; respects active date filter; hides all chrome via `@media print`
 - **Onboarding modal** — shown once on first visit; 5-feature overview; localStorage dismiss
 - **Budget tab redesign** — Variable + Fixed sections separated; last-month comparison tick marks and delta text on every bar; three summary cards
@@ -510,10 +537,13 @@ NEXT_PUBLIC_PAYERS=Alice,Bob,Carol
 
 ---
 
-## v2.0 — Future scope
+## v2.0 — SaaS (separate project)
 
-- Multi-user support with auth (Supabase Auth or Clerk)
-- Bring Your Own Key (BYOK) for OpenAI and Google Vision
-- Docker Compose for self-hosting
-- Excel export (.xlsx) — summary sheet + one sheet per receipt
+The personal project stays as-is. A separate multi-household SaaS version is planned as a new repo with:
+
+- Supabase Auth — email/password login, invite-based household onboarding
+- Households — each household is isolated; invite members via a link
+- Row Level Security on all tables scoped to `household_id`
+- Payer names from DB (no `NEXT_PUBLIC_PAYERS` env var)
 - Costco token auto-refresh (no manual DevTools copy)
+- Excel export (.xlsx) — summary sheet + one sheet per receipt
