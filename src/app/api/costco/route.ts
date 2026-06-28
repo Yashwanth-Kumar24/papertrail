@@ -61,6 +61,8 @@ const DETAIL_QUERY = `query receiptsWithCounts($barcode: String!, $documentType:
         unit
         amount
         itemUnitPriceAmount
+        fuelUnitQuantity
+        fuelUomCode
       }
       tenderArray {
         tenderDescription
