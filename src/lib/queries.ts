@@ -548,14 +548,22 @@ export async function replaceReceiptItems(
 
 // ── Return candidates (items where price trended up) ───────
 export async function getReturnCandidates(): Promise<import('./types').ItemHistory[]> {
+  // Step 1: DB function returns only qualifying item_codes (fast, no row limit issues)
+  const { data: candidates, error: rpcErr } = await supabase.rpc('get_return_candidates')
+  if (rpcErr) throw new Error(rpcErr.message)
+
+  const itemCodes = (candidates ?? []).map((c: any) => c.item_code).filter(Boolean) as string[]
+  if (!itemCodes.length) return []
+
+  // Step 2: Fetch full purchase history only for those items
   const { data, error } = await supabase
     .from('item_purchase_history')
     .select('*')
+    .in('item_code', itemCodes)
     .order('purchase_date', { ascending: false })
-    .limit(50000)
   if (error) throw new Error(error.message)
-  const all = groupHistory(data ?? [])
-  return all
+
+  return groupHistory(data ?? [])
     .filter(i => i.purchases.length > 1 && i.max_price > i.latest_price)
     .sort((a, b) => (b.max_price - b.latest_price) - (a.max_price - a.latest_price))
 }
