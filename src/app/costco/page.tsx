@@ -60,10 +60,17 @@ interface ImportProgress {
   warehouseName: string
 }
 
+interface FailedReceipt {
+  barcode:  string
+  label:    string   // warehouse name + date for display
+  reason:   string   // actual error message
+}
+
 interface ImportResult {
   imported: number
   skipped:  number
   failed:   number
+  failures: FailedReceipt[]
 }
 
 // ── Quarter generation ─────────────────────────────────────
@@ -287,12 +294,24 @@ function ImportModal({
                 </div>
               )}
               {result.failed > 0 && (
-                <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',background:'var(--red-bg)',borderRadius:'var(--r)'}}>
-                  <span style={{fontSize:20}}>✕</span>
-                  <div>
-                    <div style={{fontWeight:600,fontSize:14,color:'var(--red-tx)'}}>{result.failed} failed</div>
-                    <div style={{fontSize:12,color:'var(--red-tx)'}}>Token may have expired — re-import safely (skips duplicates)</div>
+                <div style={{background:'var(--red-bg)',borderRadius:'var(--r)',overflow:'hidden'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px'}}>
+                    <span style={{fontSize:20}}>✕</span>
+                    <div>
+                      <div style={{fontWeight:600,fontSize:14,color:'var(--red-tx)'}}>{result.failed} failed</div>
+                      <div style={{fontSize:12,color:'var(--red-tx)'}}>Re-import safely — already saved receipts are skipped automatically</div>
+                    </div>
                   </div>
+                  {result.failures.length > 0 && (
+                    <div style={{borderTop:'1px solid rgba(0,0,0,0.08)',padding:'8px 14px',display:'flex',flexDirection:'column',gap:4}}>
+                      {result.failures.map((f, i) => (
+                        <div key={i} style={{fontSize:11,color:'var(--red-tx)'}}>
+                          <span style={{fontWeight:600}}>{f.label}</span>
+                          <span style={{opacity:0.7}}> — {f.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -587,10 +606,14 @@ export default function CostcoPage() {
     setImporting(true)
     const barcodes = [...selected]
     let imported = 0, skipped = 0, failed = 0, importedTotal = 0
+    const failures: FailedReceipt[] = []
 
     for (let i = 0; i < barcodes.length; i++) {
       const barcode     = barcodes[i]
       const listReceipt = receipts.find(r => r.transactionBarcode === barcode)
+      const label       = listReceipt
+        ? `${listReceipt.warehouseName} · ${listReceipt.transactionDateTime?.slice(0,10) ?? barcode}`
+        : barcode
 
       setImportProgress({
         current: i + 1, total: barcodes.length,
@@ -598,19 +621,28 @@ export default function CostcoPage() {
         warehouseName: listReceipt?.warehouseName ?? barcode,
       })
 
+      // Small delay to avoid Costco rate-limiting on bulk imports
+      if (i > 0) await new Promise(r => setTimeout(r, 300))
+
       let d: DetailReceipt | null = null
       try {
         d = await fetchDetail(barcode)
       } catch (e: any) {
-        if (e.message?.includes('expired') || e.message?.includes('401')) {
-          setError('Token expired during import. Update token — already imported receipts will be skipped on retry.')
-          failed += barcodes.length - i
+        const reason = e.message ?? 'Unknown error'
+        if (reason.includes('expired') || reason.includes('401')) {
+          setError('Token expired during import. Paste a fresh token and re-import — already saved receipts will be skipped automatically.')
+          failures.push({ barcode, label, reason: 'Token expired (401)' })
+          failed++
           break
         }
+        failures.push({ barcode, label, reason })
         failed++; continue
       }
 
-      if (!d) { failed++; continue }
+      if (!d) {
+        failures.push({ barcode, label, reason: 'No detail data returned from Costco API' })
+        failed++; continue
+      }
 
       setImportProgress(prev => prev ? { ...prev, stage:'saving' } : null)
 
@@ -621,7 +653,10 @@ export default function CostcoPage() {
         if (Number(d.total) > 0) importedTotal += Number(d.total)
       } catch (e: any) {
         if (e.message?.includes('already saved')) skipped++
-        else failed++
+        else {
+          failures.push({ barcode, label, reason: e.message ?? 'Save failed' })
+          failed++
+        }
       }
     }
 
@@ -640,7 +675,7 @@ export default function CostcoPage() {
 
     setImporting(false)
     setImportProgress(null)
-    setImportResult({ imported, skipped, failed })
+    setImportResult({ imported, skipped, failed, failures })
   }
 
   function closeModal() {
