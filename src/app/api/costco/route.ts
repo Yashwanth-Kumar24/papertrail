@@ -61,6 +61,39 @@ const DETAIL_QUERY = `query receiptsWithCounts($barcode: String!, $documentType:
         unit
         amount
         itemUnitPriceAmount
+      }
+      tenderArray {
+        tenderDescription
+        amountTender
+        displayAccountNumber
+      }
+    }
+  }
+}`
+
+const GAS_DETAIL_QUERY = `query receiptsWithCounts($barcode: String!, $documentType: String!) {
+  receiptsWithCounts(barcode: $barcode, documentType: $documentType) {
+    receipts {
+      warehouseName
+      transactionDate
+      transactionDateTime
+      transactionBarcode
+      total
+      subTotal
+      taxes
+      instantSavings
+      membershipNumber
+      warehouseAddress1
+      warehouseCity
+      warehouseState
+      warehousePostalCode
+      totalItemCount
+      itemArray {
+        itemNumber
+        itemDescription01
+        unit
+        amount
+        itemUnitPriceAmount
         fuelUnitQuantity
         fuelUomCode
       }
@@ -92,7 +125,9 @@ export async function POST(req: NextRequest) {
         documentSubType: 'all',
       }
     } else if (type === 'detail') {
-      query = DETAIL_QUERY
+      const rt = (body.receiptType ?? '').toLowerCase()
+      const isGas = rt.includes('gas') || rt.includes('fuel')
+      query = isGas ? GAS_DETAIL_QUERY : DETAIL_QUERY
       variables = {
         barcode:      body.barcode,
         documentType: 'all',
