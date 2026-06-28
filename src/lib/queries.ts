@@ -552,6 +552,7 @@ export async function getReturnCandidates(): Promise<import('./types').ItemHisto
     .from('item_purchase_history')
     .select('*')
     .order('purchase_date', { ascending: false })
+    .limit(50000)
   if (error) throw new Error(error.message)
   const all = groupHistory(data ?? [])
   return all
