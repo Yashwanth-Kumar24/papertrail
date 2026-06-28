@@ -183,12 +183,40 @@ function processItems(itemArray: CostcoItem[], isReturn: boolean): ProcessedItem
 }
 
 // ── Convert Costco detail → ParsedReceipt ─────────────────
-function toParsedReceipt(detail: DetailReceipt, barcode: string, paidBy: string): ParsedReceipt {
+function toParsedReceipt(detail: DetailReceipt, barcode: string, paidBy: string, receiptType?: string): ParsedReceipt {
   const isReturn = Number(detail.total) < 0
+  const isGas    = (receiptType ?? '').toLowerCase().includes('gas') || (receiptType ?? '').toLowerCase().includes('fuel')
   const location = fmtLocation(detail.warehouseAddress1, detail.warehouseCity, detail.warehouseState)
   const timeStr  = detail.transactionDateTime?.includes('T')
     ? detail.transactionDateTime.split('T')[1]?.slice(0, 8)
     : undefined
+
+  let lineItems: ProcessedItem[]
+  if (isGas && detail.itemArray?.length) {
+    // Gas receipts: use actual fuel item data, name from description
+    lineItems = detail.itemArray.map((item: any, i: number) => ({
+      item_code:       item.itemNumber || undefined,
+      name:            item.itemDescription01 || 'Fuel',
+      original_price:  Number(item.itemUnitPriceAmount) || 0,
+      discount_amount: 0,
+      final_price:     Number(item.amount) || Number(detail.total),
+      quantity:        Number(item.fuelUnitQuantity) || 1,
+      sort_order:      i,
+    }))
+  } else if (!detail.itemArray?.length && isGas) {
+    // Fallback: no itemArray at all
+    lineItems = [{
+      item_code:       undefined,
+      name:            'Fuel',
+      original_price:  Number(detail.total),
+      discount_amount: 0,
+      final_price:     Number(detail.total),
+      quantity:        1,
+      sort_order:      0,
+    }]
+  } else {
+    lineItems = processItems(detail.itemArray, isReturn)
+  }
 
   return {
     store:          { brand: 'costco', name: 'Costco Wholesale', location: location || undefined },
@@ -199,8 +227,8 @@ function toParsedReceipt(detail: DetailReceipt, barcode: string, paidBy: string)
     tax:            Number(detail.taxes) || undefined,
     paid_by:        paidBy,
     source:         'costco_api',
-    category:       'groceries',
-    line_items:     processItems(detail.itemArray, isReturn),
+    category:       isGas ? 'fuel' : 'groceries',
+    line_items:     lineItems,
     raw_ocr_text:   '',
   }
 }
@@ -562,11 +590,11 @@ export default function CostcoPage() {
 
   useEffect(() => { if (token) fetchList(quarter, token) }, [quarter, token, fetchList])
 
-  async function fetchDetail(barcode: string): Promise<DetailReceipt | null> {
+  async function fetchDetail(barcode: string, receiptType?: string): Promise<DetailReceipt | null> {
     if (detailCache[barcode]) return detailCache[barcode]
     const res  = await fetch('/api/costco', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body:   JSON.stringify({ type:'detail', token, barcode }),
+      body:   JSON.stringify({ type:'detail', token, barcode, receiptType }),
     })
     const json = await res.json()
     if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to load receipt.')
@@ -578,8 +606,9 @@ export default function CostcoPage() {
   async function openDetail(barcode: string) {
     if (detailLoading) return
     setActiveBarcode(barcode); setDetailLoading(true); setDetailError(''); setDetail(null)
+    const receiptType = receipts.find(r => r.transactionBarcode === barcode)?.receiptType
     try {
-      const d = await fetchDetail(barcode)
+      const d = await fetchDetail(barcode, receiptType)
       if (d) setDetail(d)
       else { setDetailError('Receipt detail not found.'); setActiveBarcode('') }
     } catch (e: any) {
@@ -626,7 +655,7 @@ export default function CostcoPage() {
 
       let d: DetailReceipt | null = null
       try {
-        d = await fetchDetail(barcode)
+        d = await fetchDetail(barcode, listReceipt?.receiptType)
       } catch (e: any) {
         const reason = e.message ?? 'Unknown error'
         if (reason.includes('expired') || reason.includes('401')) {
@@ -646,7 +675,7 @@ export default function CostcoPage() {
 
       setImportProgress(prev => prev ? { ...prev, stage:'saving' } : null)
 
-      const parsed = toParsedReceipt(d, barcode, importPaidBy)
+      const parsed = toParsedReceipt(d, barcode, importPaidBy, listReceipt?.receiptType)
       try {
         await saveReceipt(parsed)
         imported++

@@ -91,9 +91,14 @@ export async function POST(req: NextRequest) {
       }
     } else if (type === 'detail') {
       query = DETAIL_QUERY
+      // receiptType from the list response: 'Gas Station' → FuelReceipts, everything else → WarehouseReceiptDetail
+      const rt = (body.receiptType ?? '').toLowerCase()
+      const docType = rt.includes('gas') || rt.includes('fuel')
+        ? 'FuelReceipts'
+        : 'WarehouseReceiptDetail'
       variables = {
         barcode:      body.barcode,
-        documentType: 'warehouse',
+        documentType: docType,
       }
     } else {
       return NextResponse.json({ error: 'Invalid type.' }, { status: 400 })
