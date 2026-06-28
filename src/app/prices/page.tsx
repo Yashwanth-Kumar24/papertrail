@@ -138,9 +138,10 @@ function ItemsPageContent() {
   const [results,  setResults]  = useState<ItemHistory[]>([])
   const [loading,  setLoading]  = useState(false)
   const [searched, setSearched] = useState(false)
-  const [returns,    setReturns]    = useState<ItemHistory[]>([])
-  const [retLoading, setRetLoading] = useState(false)
-  const [retFilter,  setRetFilter]  = useState('')
+  const [returns,      setReturns]      = useState<ItemHistory[]>([])
+  const [retLoading,   setRetLoading]   = useState(false)
+  const [retFilter,    setRetFilter]    = useState('')
+  const retFetchedAt = useRef<number>(0)
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
@@ -177,7 +178,7 @@ function ItemsPageContent() {
     if (searchParams.get('mode') === 'returns') {
       setMode('returns')
       setRetLoading(true)
-      getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
+      getReturnCandidates().then(r => { setReturns(r); retFetchedAt.current = Date.now() }).finally(() => setRetLoading(false))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once on mount only
@@ -185,9 +186,10 @@ function ItemsPageContent() {
   function enterReturns() {
     setMode('returns')
     router.replace('/prices?mode=returns')
-    if (returns.length > 0) return
+    const stale = Date.now() - retFetchedAt.current > 2 * 60 * 1000
+    if (!stale && returns.length > 0) return
     setRetLoading(true)
-    getReturnCandidates().then(setReturns).finally(() => setRetLoading(false))
+    getReturnCandidates().then(r => { setReturns(r); retFetchedAt.current = Date.now() }).finally(() => setRetLoading(false))
   }
 
   return (
