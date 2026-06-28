@@ -43,6 +43,8 @@ interface CostcoItem {
   unit:                 number
   amount:               number
   itemUnitPriceAmount:  number
+  fuelUnitQuantity?:    number
+  fuelUomCode?:         string
 }
 
 interface Tender {
@@ -447,7 +449,7 @@ function ReceiptDetail({
 }) {
   const isReturn = Number(detail.total) < 0
   const loc      = fmtLocation(detail.warehouseAddress1, detail.warehouseCity, detail.warehouseState)
-  const hasQty   = detail.itemArray.some(i => Math.abs(Number(i.unit)) !== 1)
+  const hasQty   = detail.itemArray.some(i => Math.abs(Number(i.unit)) !== 1 || i.fuelUnitQuantity)
   const isAdj    = (item: CostcoItem) => (item.itemDescription01 || '').trim().startsWith('/')
 
   return (
@@ -522,7 +524,11 @@ function ReceiptDetail({
                       {returned && <div style={{fontSize:10,fontWeight:600,color:'var(--red-tx)',marginTop:2}}>RETURNED</div>}
                       {adj && <div style={{fontSize:10,color:'var(--ink3)',marginTop:1}}>adjustment</div>}
                     </td>
-                    {hasQty && <td style={{textAlign:'right',fontFamily:'var(--mono)',color:returned?'var(--red-tx)':'inherit'}}>{item.unit}</td>}
+                    {hasQty && <td style={{textAlign:'right',fontFamily:'var(--mono)',color:returned?'var(--red-tx)':'inherit'}}>
+                      {item.fuelUnitQuantity
+                        ? `${item.fuelUnitQuantity} ${(item.fuelUomCode ?? 'gal').toLowerCase()}`
+                        : item.unit}
+                    </td>}
                     <td style={{textAlign:'right',fontFamily:'var(--mono)'}}>{item.itemUnitPriceAmount > 0 ? money(item.itemUnitPriceAmount) : '—'}</td>
                     <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600,color:returned?'var(--red-tx)':adj?'var(--ink2)':'inherit'}}>
                       {moneyRaw(item.amount)}
