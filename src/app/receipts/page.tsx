@@ -409,7 +409,7 @@ export default function ReceiptsPage() {
           <div className="rcard-grid">
             {receipts.map(r => (
               <div key={r.id} className="rcard">
-                <Link href={`/receipts/${r.id}`} style={{textDecoration:'none',color:'inherit',display:'block'}}>
+                <Link href={`/receipts/${r.id}`} prefetch={false} style={{textDecoration:'none',color:'inherit',display:'block'}}>
                   <div className="rcard-head">
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
@@ -480,7 +480,7 @@ export default function ReceiptsPage() {
                   </div>
                 </Link>
                 <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',paddingTop:8,marginTop:4,borderTop:'1px solid var(--border)'}}>
-                  <Link href={`/receipts/${r.id}`} style={{fontSize:13,fontWeight:500,color:'var(--green)',textDecoration:'none'}}>
+                  <Link href={`/receipts/${r.id}`} prefetch={false} style={{fontSize:13,fontWeight:500,color:'var(--green)',textDecoration:'none'}}>
                     View receipt →
                   </Link>
                   <button

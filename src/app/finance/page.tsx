@@ -100,7 +100,7 @@ function MonthlyDigest({ onDismiss }: { onDismiss: () => void }) {
       {biggestReceipt && (
         <div style={{fontSize:12,color:'var(--ink2)'}}>
           Biggest trip:{' '}
-          <Link href={`/receipts/${biggestReceipt.id}`} style={{color:'var(--green)',fontWeight:500}}>
+          <Link href={`/receipts/${biggestReceipt.id}`} prefetch={false} style={{color:'var(--green)',fontWeight:500}}>
             {biggestReceipt.store_name} · {money(Number(biggestReceipt.total))}
           </Link>
         </div>
@@ -265,7 +265,7 @@ function SpendingHeatmap() {
                   </div>
                   <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
                     <span style={{fontFamily:'var(--mono)',fontWeight:600}}>{money(Number(r.total))}</span>
-                    <Link href={`/receipts/${r.id}`} style={{fontSize:12,color:'var(--green)',fontWeight:500}}>View →</Link>
+                    <Link href={`/receipts/${r.id}`} prefetch={false} style={{fontSize:12,color:'var(--green)',fontWeight:500}}>View →</Link>
                   </div>
                 </div>
               ))}
@@ -840,7 +840,7 @@ function SummaryTab({ stats, dateFrom, dateTo }: { stats: Stats; dateFrom: strin
               </div>
               <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
                 <span style={{fontFamily:'var(--mono)',fontWeight:700,fontSize:14}}>{money(Number(r.total))}</span>
-                <Link href={`/receipts/${r.id}`} style={{fontSize:12,color:'var(--green)',fontWeight:500}}>View →</Link>
+                <Link href={`/receipts/${r.id}`} prefetch={false} style={{fontSize:12,color:'var(--green)',fontWeight:500}}>View →</Link>
               </div>
             </div>
           ))}

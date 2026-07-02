@@ -44,7 +44,7 @@ function ItemRow({ item }: { item: ItemHistory }) {
         </td>
         <td><TrendBadge trend={item.trend} min={item.min_price} max={item.max_price} latestPrice={item.latest_price}/></td>
         <td>
-          <Link href={`/receipts/${latest.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+          <Link href={`/receipts/${latest.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
             Receipt →
           </Link>
         </td>
@@ -60,7 +60,7 @@ function ItemRow({ item }: { item: ItemHistory }) {
           </td>
           <td></td>
           <td>
-            <Link href={`/receipts/${p.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+            <Link href={`/receipts/${p.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
               Receipt →
             </Link>
           </td>
@@ -104,7 +104,7 @@ function ReturnRow({ item }: { item: ItemHistory }) {
         </td>
         {/* Link to the expensive receipt — the one to bring to the store */}
         <td>
-          <Link href={`/receipts/${expensive.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+          <Link href={`/receipts/${expensive.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
             Return receipt →
           </Link>
         </td>
@@ -118,7 +118,7 @@ function ReturnRow({ item }: { item: ItemHistory }) {
           <td colSpan={2} style={{fontSize:12,color:'var(--ink2)'}}>{p.store_name} · {fmt(p.purchase_date)}</td>
           <td style={{fontFamily:'var(--mono)',fontWeight:500,fontSize:12}}>{money(p.final_price)}</td>
           <td>
-            <Link href={`/receipts/${p.receipt_id}`} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
+            <Link href={`/receipts/${p.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}} onClick={e => e.stopPropagation()}>
               Receipt →
             </Link>
           </td>
