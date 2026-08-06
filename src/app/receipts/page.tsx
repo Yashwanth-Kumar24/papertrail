@@ -1,11 +1,12 @@
 'use client'
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef, Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import {
   getReceipts, getReceiptMeta, getStats,
   deleteReceipt, deleteReceipts, getAllReceiptIds, RECEIPTS_PAGE_SIZE,
 } from '@/lib/queries'
-import type { ReceiptSort } from '@/lib/queries'
+import type { ReceiptSort, ReturnFilter } from '@/lib/queries'
 import type { Receipt } from '@/lib/types'
 import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/lib/types'
 
@@ -22,6 +23,28 @@ const DATE_PRESETS = [
   { label: 'This year',     days: 365 },
   { label: 'Custom',        days: -1  },
 ]
+
+// Reverse-maps a from/to pair back to whichever preset pill it matches, so a
+// filter state restored from the URL (bookmark, back-navigation) highlights
+// the right pill instead of always defaulting to "All time." Presets are
+// relative to "today," so this only matches exactly on the day the range was
+// set — falls back to "Custom" otherwise, which is honest (the dates are
+// still shown and applied correctly either way).
+function presetForDates(df: string, dt: string): string {
+  if (!df && !dt) return 'All time'
+  for (const p of DATE_PRESETS) {
+    if (p.days <= 0) continue
+    if (df === toISO(new Date(Date.now() - p.days * 86400000)) && dt === toISO(new Date())) return p.label
+  }
+  return 'Custom'
+}
+
+function buildQuery(params: Record<string, string>): string {
+  const sp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v) sp.set(k, v)
+  const s = sp.toString()
+  return s ? `?${s}` : ''
+}
 
 function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
   return (
@@ -41,26 +64,31 @@ function DeleteConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCance
 }
 
 
-export default function ReceiptsPage() {
+function ReceiptsPageContent() {
+  const router      = useRouter()
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+
   const [receipts,      setReceipts]      = useState<Receipt[]>([])
   const [totalCount,    setTotalCount]    = useState(0)
   const [offset,        setOffset]        = useState(0)
   const [loadingMore,   setLoadingMore]   = useState(false)
-  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]>([])
+  const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string; total: number }[]>([])
   const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
-  const [storeName,     setStoreName]     = useState('')
-  const [datePreset,    setDatePreset]    = useState('All time')
-  const [dateFrom,      setDateFrom]      = useState('')
-  const [dateTo,        setDateTo]        = useState('')
-  const [paidBy,        setPaidBy]        = useState('')
+  const [storeName,     setStoreName]     = useState(() => searchParams.get('store') ?? '')
+  const [dateFrom,      setDateFrom]      = useState(() => searchParams.get('from') ?? '')
+  const [dateTo,        setDateTo]        = useState(() => searchParams.get('to') ?? '')
+  const [datePreset,    setDatePreset]    = useState(() => presetForDates(searchParams.get('from') ?? '', searchParams.get('to') ?? ''))
+  const [paidBy,        setPaidBy]        = useState(() => searchParams.get('payer') ?? '')
   const [loading,       setLoading]       = useState(true)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
   const [selected,      setSelected]      = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
-  const [sortBy,        setSortBy]        = useState<ReceiptSort>('date_desc')
-  const [sourceFilter,   setSourceFilter]   = useState('')
-  const [categoryFilter, setCategoryFilter] = useState('')
+  const [sortBy,        setSortBy]        = useState<ReceiptSort>(() => (searchParams.get('sort') as ReceiptSort) || 'date_desc')
+  const [sourceFilter,   setSourceFilter]   = useState(() => searchParams.get('source') ?? '')
+  const [categoryFilter, setCategoryFilter] = useState(() => searchParams.get('category') ?? '')
+  const [returnFilter,   setReturnFilter]   = useState<'' | ReturnFilter>(() => (searchParams.get('kind') as ReturnFilter) || '')
   const [selectingAll,   setSelectingAll]   = useState(false)
 
   // Race guard: rapid filter/sort changes (or a stale "Load more" click that
@@ -77,7 +105,7 @@ export default function ReceiptsPage() {
   const loadPage = useCallback(async (
     sn: string, df: string, dt: string, pb: string,
     off: number, append: boolean,
-    sort: ReceiptSort = 'date_desc', src?: string, cat?: string,
+    sort: ReceiptSort = 'date_desc', src?: string, cat?: string, kind?: ReturnFilter,
   ) => {
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -87,8 +115,8 @@ export default function ReceiptsPage() {
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
       const [{ data, totalCount: tc }, s] = await Promise.all([
-        getReceipts(sn || undefined, df || undefined, dt || undefined, pb || undefined, off, sort, src, cat, controller.signal),
-        off === 0 ? getStats(sn || undefined, df || undefined, dt || undefined, pb || undefined, src, cat, controller.signal) : Promise.resolve(null),
+        getReceipts(sn || undefined, df || undefined, dt || undefined, pb || undefined, off, sort, src, cat, controller.signal, kind),
+        off === 0 ? getStats(sn || undefined, df || undefined, dt || undefined, pb || undefined, src, cat, controller.signal, kind) : Promise.resolve(null),
       ])
       if (genRef.current !== myGen) return // superseded by a newer request — discard
       setReceipts(prev => append ? [...prev, ...data] : data)
@@ -119,18 +147,41 @@ export default function ReceiptsPage() {
 
   useEffect(() => {
     setSelected(new Set())
-    loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
-  }, [storeName, dateFrom, dateTo, paidBy, sortBy, sourceFilter, categoryFilter, loadPage])
+    loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined, returnFilter || undefined)
+  }, [storeName, dateFrom, dateTo, paidBy, sortBy, sourceFilter, categoryFilter, returnFilter, loadPage])
 
-  // Filter allMeta by active date range + source + category for coordinated dropdowns
+  // Keep every filter/sort choice in the URL (same pattern already used on
+  // the Prices page) so navigating to a receipt and back — or bookmarking,
+  // sharing, hitting refresh — restores the exact filtered view instead of
+  // resetting to defaults. router.replace targets the current pathname
+  // (not a hardcoded /receipts) since this component is also embedded in
+  // /expenses' Receipts sub-tab.
+  useEffect(() => {
+    const qs = buildQuery({
+      store:    storeName,
+      from:     dateFrom,
+      to:       dateTo,
+      payer:    paidBy,
+      sort:     sortBy === 'date_desc' ? '' : sortBy,
+      source:   sourceFilter,
+      category: categoryFilter,
+      kind:     returnFilter,
+    })
+    router.replace(`${pathname}${qs}`, { scroll: false })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeName, dateFrom, dateTo, paidBy, sortBy, sourceFilter, categoryFilter, returnFilter])
+
+  // Filter allMeta by active date range + source + category + kind for coordinated dropdowns
   const filteredMeta = useMemo(() => {
     let src = allMeta
     if (dateFrom)       src = src.filter(m => m.purchase_date >= dateFrom)
     if (dateTo)         src = src.filter(m => m.purchase_date <= dateTo)
     if (sourceFilter)   src = src.filter(m => m.source === sourceFilter)
     if (categoryFilter) src = src.filter(m => m.category === categoryFilter)
+    if (returnFilter === 'purchases') src = src.filter(m => Number(m.total) >= 0)
+    if (returnFilter === 'returns')   src = src.filter(m => Number(m.total) <  0)
     return src
-  }, [allMeta, dateFrom, dateTo, sourceFilter, categoryFilter])
+  }, [allMeta, dateFrom, dateTo, sourceFilter, categoryFilter, returnFilter])
 
   const availableStores = useMemo(() => {
     let src = filteredMeta
@@ -176,7 +227,7 @@ export default function ReceiptsPage() {
       setTotalCount(c => c - 1)
       const [m, s] = await Promise.all([
         getReceiptMeta(),
-        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined),
+        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined, undefined, returnFilter||undefined),
       ])
       setAllMeta(m); setStats(s)
     } catch { alert('Delete failed. Please try again.') }
@@ -193,7 +244,7 @@ export default function ReceiptsPage() {
       setSelected(new Set())
       const [m, s] = await Promise.all([
         getReceiptMeta(),
-        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined),
+        getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined, undefined, returnFilter||undefined),
       ])
       setAllMeta(m); setStats(s)
     } catch {
@@ -204,7 +255,7 @@ export default function ReceiptsPage() {
       // from the server so what's shown matches DB truth again.
       alert('Batch delete failed partway through — reloading to show what was actually deleted.')
       setSelected(new Set())
-      loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
+      loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined, returnFilter || undefined)
     }
     finally { setBatchDeleting(false) }
   }
@@ -226,6 +277,7 @@ export default function ReceiptsPage() {
         const ids = await getAllReceiptIds(
           storeName || undefined, dateFrom || undefined, dateTo || undefined,
           paidBy || undefined, sourceFilter || undefined, categoryFilter || undefined,
+          returnFilter || undefined,
         )
         setSelected(new Set(ids))
       } catch { alert('Could not select all. Try again.') }
@@ -243,7 +295,12 @@ export default function ReceiptsPage() {
 
       <div className="stat-grid">
         <div className="stat-card"><div className="stat-label">Receipts</div><div className="stat-val">{stats.receipts}</div></div>
-        <div className="stat-card"><div className="stat-label">Total spent</div><div className="stat-val" style={{fontSize:18}}>{money(stats.total)}</div></div>
+        <div className="stat-card">
+          <div className="stat-label">Total spent</div>
+          <div className="stat-val" style={{fontSize:18,color:stats.total<0?'var(--red-tx)':'inherit'}}>
+            {stats.total < 0 ? `−${money(Math.abs(stats.total))}` : money(stats.total)}
+          </div>
+        </div>
         <div className="stat-card"><div className="stat-label">Line items</div><div className="stat-val">{stats.items}</div></div>
         <div className="stat-card"><div className="stat-label">Saved</div><div className="stat-val" style={{color:'var(--green)',fontSize:18}}>{money(stats.savings)}</div></div>
       </div>
@@ -365,6 +422,32 @@ export default function ReceiptsPage() {
                 cursor:'pointer',fontFamily:'var(--sans)',
               }}
             >{CATEGORY_LABELS[cat]}</button>
+          )
+        })}
+      </div>
+
+      {/* Purchases / Returns filter */}
+      <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap',alignItems:'center'}}>
+        <span style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginRight:4}}>Kind</span>
+        {([
+          { key: '',           label: 'All' },
+          { key: 'purchases',  label: 'Purchases' },
+          { key: 'returns',    label: 'Returns' },
+        ] as { key: '' | ReturnFilter; label: string }[]).map(k => {
+          const active = returnFilter === k.key
+          return (
+            <button
+              key={k.key || 'all'}
+              onClick={() => setReturnFilter(k.key as '' | ReturnFilter)}
+              style={{
+                fontSize:12,padding:'4px 11px',borderRadius:999,
+                border:`1px solid ${active ? 'var(--red-tx)' : 'var(--border2)'}`,
+                background: active ? 'var(--red-tx)' : 'transparent',
+                color:      active ? '#fff' : 'var(--ink2)',
+                fontWeight: active ? 600 : 400,
+                cursor:'pointer',fontFamily:'var(--sans)',
+              }}
+            >{k.label}</button>
           )
         })}
       </div>
@@ -541,7 +624,7 @@ export default function ReceiptsPage() {
           {hasMore && (
             <div style={{textAlign:'center',marginTop:20}}>
               <button
-                onClick={() => loadPage(storeName, dateFrom, dateTo, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined, categoryFilter || undefined)}
+                onClick={() => loadPage(storeName, dateFrom, dateTo, paidBy, offset + RECEIPTS_PAGE_SIZE, true, sortBy, sourceFilter || undefined, categoryFilter || undefined, returnFilter || undefined)}
                 disabled={loadingMore}
                 style={{
                   background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',
@@ -556,5 +639,13 @@ export default function ReceiptsPage() {
         </>
       )}
     </main>
+  )
+}
+
+export default function ReceiptsPage() {
+  return (
+    <Suspense fallback={<main className="page"><div className="empty"><p>Loading…</p></div></main>}>
+      <ReceiptsPageContent />
+    </Suspense>
   )
 }

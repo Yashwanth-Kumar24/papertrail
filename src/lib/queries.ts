@@ -160,6 +160,8 @@ const PAGE_SIZE = 20
 
 export type ReceiptSort = 'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'
 
+export type ReturnFilter = 'purchases' | 'returns'
+
 // ── Get receipts list (paginated, with item count) ─────────
 // Accepts an optional AbortSignal so the caller can cancel an in-flight
 // request when a newer one supersedes it (rapid filter/sort changes) —
@@ -175,6 +177,7 @@ export async function getReceipts(
   source?: string,
   category?: string,
   signal?: AbortSignal,
+  returnFilter?: ReturnFilter,
 ): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
@@ -187,6 +190,8 @@ export async function getReceipts(
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
   if (category)  q = q.eq('category', category)
+  if (returnFilter === 'purchases') q = q.gte('total', 0)
+  if (returnFilter === 'returns')   q = q.lt('total', 0)
 
   if (sortBy === 'date_desc')  q = q.order('purchase_date', { ascending: false }).order('created_at', { ascending: false })
   if (sortBy === 'date_asc')   q = q.order('purchase_date', { ascending: true  }).order('created_at', { ascending: true  })
@@ -224,12 +229,20 @@ export async function getReceiptById(id: string): Promise<Receipt | null> {
   return data as Receipt
 }
 
-// ── Get store_name+date+paid_by+source+category for coordinated filter dropdowns ──
-export async function getReceiptMeta(): Promise<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]> {
+// ── Get store_name+date+paid_by+source+category+total for coordinated filter dropdowns ──
+export interface ReceiptMeta {
+  store_name: string
+  purchase_date: string
+  paid_by: string | null
+  source: string
+  category: string
+  total: number
+}
+export async function getReceiptMeta(): Promise<ReceiptMeta[]> {
   const { data } = await supabase
     .from('receipts')
-    .select('store_name, purchase_date, paid_by, source, category')
-  return (data ?? []) as { store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string }[]
+    .select('store_name, purchase_date, paid_by, source, category, total')
+  return (data ?? []) as ReceiptMeta[]
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
@@ -237,14 +250,15 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
 // pulling every matching receipt id to the client and re-querying with .in() —
 // that two-round-trip shape doesn't scale and risks PostgREST/URL length
 // limits once the filtered set runs into the thousands.
-export async function getStats(storeName?: string, dateFrom?: string, dateTo?: string, paidBy?: string, source?: string, category?: string, signal?: AbortSignal) {
+export async function getStats(storeName?: string, dateFrom?: string, dateTo?: string, paidBy?: string, source?: string, category?: string, signal?: AbortSignal, returnFilter?: ReturnFilter) {
   let q = supabase.rpc('get_receipt_stats', {
-    p_store:     storeName ?? null,
-    p_date_from: dateFrom  ?? null,
-    p_date_to:   dateTo    ?? null,
-    p_paid_by:   paidBy    ?? null,
-    p_source:    source    ?? null,
-    p_category:  category  ?? null,
+    p_store:         storeName ?? null,
+    p_date_from:     dateFrom  ?? null,
+    p_date_to:       dateTo    ?? null,
+    p_paid_by:       paidBy    ?? null,
+    p_source:        source    ?? null,
+    p_category:      category  ?? null,
+    p_return_filter: returnFilter ?? null,
   })
   if (signal) q = q.abortSignal(signal)
   const { data, error } = await q
@@ -339,6 +353,30 @@ export async function searchItems(
   return groupHistory(data ?? [])
 }
 
+// ── Search returned items (Prices → ↩ Returns tab) ──────────
+// Entirely separate from searchItems()/item_purchase_history above — sourced
+// from item_returns instead, so it can never affect the main search's price-
+// trend math (which explicitly excludes returned rows for exactly that
+// reason). No grouping/trend computation here, just a flat, most-recent-
+// first list — "what did I return, when, for how much."
+export async function searchReturnedItems(
+  query: string,
+  brand?: string,
+  dateFrom?: string,
+  dateTo?: string,
+): Promise<import('./types').ReturnedItem[]> {
+  if (!query.trim()) return []
+
+  const { data, error } = await supabase.rpc('search_returned_items', {
+    p_query:     query.trim(),
+    p_brand:     brand && brand !== 'all' ? brand : null,
+    p_date_from: dateFrom ?? null,
+    p_date_to:   dateTo   ?? null,
+  })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as import('./types').ReturnedItem[]
+}
+
 function groupHistory(rows: any[]): ItemHistory[] {
   const map = new Map<string, ItemHistory>()
 
@@ -418,7 +456,11 @@ export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
 
   return {
     totalSpent,
-    totalSaved:   Number(s.totalSaved ?? 0),
+    totalSaved:    Number(s.totalSaved ?? 0),
+    // Total refunded this period, shown as its own figure — never netted
+    // into a category, since a return receipt's category doesn't reliably
+    // match what was actually returned (see get_spending_stats in schema.sql).
+    totalRefunded: Number(s.totalRefunded ?? 0),
     receiptCount,
     avgPerTrip:   receiptCount ? totalSpent / receiptCount : 0,
     byBrand:      ((s.byBrand ?? []) as any[]).map(b => ({ brand: b.brand, name: b.name, count: Number(b.count), positiveCount: Number(b.positiveCount ?? b.count), total: Number(b.total) })),
@@ -510,6 +552,7 @@ export async function getAllReceiptIds(
   paidBy?: string,
   source?: string,
   category?: string,
+  returnFilter?: ReturnFilter,
 ): Promise<string[]> {
   let q = supabase.from('receipts').select('id')
   if (storeName) q = q.eq('store_name', storeName)
@@ -518,6 +561,8 @@ export async function getAllReceiptIds(
   if (paidBy)    q = q.eq('paid_by', paidBy)
   if (source)    q = q.eq('source', source)
   if (category)  q = q.eq('category', category)
+  if (returnFilter === 'purchases') q = q.gte('total', 0)
+  if (returnFilter === 'returns')   q = q.lt('total', 0)
   const { data, error } = await q
   if (error) throw new Error(error.message)
   return (data ?? []).map((r: any) => r.id)
@@ -660,6 +705,19 @@ export async function getCategorySpendingForMonth(
     map[cat] = (map[cat] ?? 0) + Number(r.total)
   }
   return map
+}
+
+// Total refunded in a date range — shown as its own figure next to category
+// spend rather than netted into any one category (a return receipt's
+// category doesn't reliably match what was actually returned). Used by the
+// Budget tab, scoped to the same calendar month as getCategorySpendingForMonth.
+export async function getRefundTotal(dateFrom?: string, dateTo?: string): Promise<number> {
+  const { data, error } = await supabase.rpc('get_refund_total', {
+    p_date_from: dateFrom ?? null,
+    p_date_to:   dateTo   ?? null,
+  })
+  if (error) throw new Error(error.message)
+  return Number(data ?? 0)
 }
 
 // ── Budgets ────────────────────────────────────────────────

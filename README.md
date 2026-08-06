@@ -37,7 +37,7 @@ A personal household receipt tracker — scan any store receipt, extract items w
 ### Expenses
 Two sub-tabs under a single nav item:
 
-- **Receipts** — browse all receipts in a card grid; filter by store, date preset or custom range, payer, source, and category (all coordinated); sort by date or amount; batch-select and delete; paginated with stats bar
+- **Receipts** — browse all receipts in a card grid; filter by store, date preset or custom range, payer, source, category, and **kind** (all purchases / returns only, all coordinated); sort by date or amount; batch-select and delete; paginated with stats bar. All filters live in the URL, so navigating into a receipt and back — or bookmarking/sharing a filtered view — restores it exactly
 - **Recurring** — track rent, subscriptions, utilities on monthly / annual / weekly / quarterly schedules; mark paid per cycle; full payment history log
 
 ### Receipts (detail)
@@ -59,6 +59,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
 - **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt
+- **↩ Refunds mode** — a separate search for items you've actually returned (not to be confused with Price alerts above, which is about *current* price drops). Search by name or item code; results show refund amount, date, store, and a link to the return receipt. Sourced from a dedicated dataset that never touches the main search's price-trend data
 - **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
 ### Needs
@@ -284,6 +285,10 @@ recurring_payments:
 
 -- View used by item search and price alerts (excludes returned items):
 item_purchase_history (joins receipts + receipt_items where final_price >= 0)
+
+-- Complement view, used by Prices → ↩ Refunds only (kept separate so the
+-- above never mixes in returned rows and corrupts price-trend math):
+item_returns (joins receipts + receipt_items where final_price < 0)
 ```
 
 `brand` is a normalized key (`costco`, `walmart`, `whole-foods`, `ross`, `target`, `safeway`, `trader-joes`, `kroger`, `cvs`, `walgreens`, `aldi`, `home-depot`, `lowes`, `other`). Unknown stores fall through to `other` and display by exact name.
@@ -301,6 +306,18 @@ Defined in `schema.sql`, included automatically in a fresh setup. All stats/aggr
 | `get_spending_stats(date_from, date_to)` | Finance Summary + Analytics | All by-store/month/payer/category breakdowns, computed in Postgres |
 | `search_item_history(query, ...)` | Prices search | Narrows to matching items first, then returns their full history uncapped |
 | `get_return_candidates()` | Prices → Price alerts, weekly cron | Single source of truth for "what counts as a return candidate" — used by both |
+| `search_returned_items(query, ...)` | Prices → ↩ Refunds | Searches `item_returns` (returned line items) — entirely separate from item search, never touches its price-trend math |
+| `get_refund_total(date_from, date_to)` | Budget tab | Total refunded in a date range, shown separately from category spend (see Refunds and returns below) |
+
+### Refunds and returns
+
+Refunds net into every top-line total (Receipts page "Total spent," Finance "Total spent," "Top stores," "By month") — a return receipt's negative total already reduces these, same math as any other receipt.
+
+They're deliberately **not** netted into category or budget breakdowns, though. A Costco return receipt carries one category (usually whatever `suggestCategory('costco')` assigned, e.g. Groceries), but the items being returned may originally have been purchased — and categorized — as Household, Clothing, etc. Netting the return into its own category would misattribute spend rather than correct it. Instead, category/budget views show a separate **"↩ $X refunded"** note alongside the category breakdown, visible without corrupting any one category's number.
+
+Receipt/trip *counts* (Finance "Receipts," "Avg per trip," Monthly digest) exclude return receipts — a return isn't a shopping trip. The Receipts page's own count is different on purpose: it's tied to pagination ("X of Y shown"), so it stays a literal count of every matching row, returns included, matching what's actually in the list below it.
+
+The Receipts page has a **Kind: All / Purchases / Returns** filter (`total < 0` under the hood — no separate column needed) for browsing return receipts directly.
 
 ### Duplicate prevention
 

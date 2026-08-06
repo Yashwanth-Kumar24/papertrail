@@ -220,6 +220,32 @@ create view item_purchase_history as
   -- Excludes: returned items (final_price < 0), coupon reversals on return receipts
 
 
+-- ── item_returns (view) ───────────────────────────────────
+-- The complement of item_purchase_history — only returned line items
+-- (final_price < 0). Kept as a separate view rather than widening
+-- item_purchase_history's filter: the two are used for different purposes
+-- (price-trend analysis vs. "what did I return"), and mixing negative rows
+-- into the trend view would corrupt it (that's the whole reason
+-- item_purchase_history excludes them in the first place).
+create view item_returns as
+  select
+    ri.id,
+    ri.receipt_id,
+    ri.item_code,
+    ri.name,
+    abs(ri.final_price) as refund_amount,
+    r.purchase_date  as return_date,
+    r.purchase_time,
+    r.brand,
+    r.store_name,
+    r.location,
+    r.transaction_id,
+    r.paid_by
+  from receipt_items ri
+  join receipts r on r.id = ri.receipt_id
+  where ri.final_price < 0;
+
+
 -- ── RPC functions (server-side aggregation + atomic writes) ─
 -- Added to fix: (1) replaceReceiptItems delete+insert not being atomic,
 -- (2) return-candidate detection drifting between the UI and the weekly
@@ -283,13 +309,21 @@ $$;
 -- Filter-aware receipt stats (Receipts page stat cards). Replaces a
 -- fetch-all-matching-ids-then-.in()-again round trip that risked hitting
 -- PostgREST/URL length limits once the filtered set ran into the thousands.
+--
+-- p_return_filter: 'purchases' | 'returns' | null (all). This mirrors the
+-- Receipts page's own filter/pagination truth (getReceipts still returns
+-- both purchases and returns unless this narrows it), so `receipts` here is
+-- deliberately a literal row count — NOT the "exclude refunds" trip-count
+-- semantics used in get_spending_stats below, which is a different page
+-- with a different meaning for "how many receipts."
 create or replace function get_receipt_stats(
-  p_store     text default null,
-  p_date_from date default null,
-  p_date_to   date default null,
-  p_paid_by   text default null,
-  p_source    text default null,
-  p_category  text default null
+  p_store         text default null,
+  p_date_from     date default null,
+  p_date_to       date default null,
+  p_paid_by       text default null,
+  p_source        text default null,
+  p_category      text default null,
+  p_return_filter text default null
 )
 returns table(receipts bigint, total numeric, items bigint, savings numeric)
 language sql
@@ -304,6 +338,9 @@ as $$
       and (p_paid_by   is null or r.paid_by      = p_paid_by)
       and (p_source    is null or r.source       = p_source)
       and (p_category  is null or r.category     = p_category)
+      and (p_return_filter is null
+           or (p_return_filter = 'purchases' and r.total >= 0)
+           or (p_return_filter = 'returns'   and r.total <  0))
   )
   select
     (select count(*) from matched)::bigint,
@@ -370,9 +407,20 @@ as $$
     group by key
   )
   select jsonb_build_object(
-    'totalSpent',   coalesce((select sum(total) from filtered), 0),
-    'receiptCount', (select count(*) from filtered),
-    'totalSaved',   coalesce((select sum(ri.discount_amount) from receipt_items ri join filtered f on f.id = ri.receipt_id), 0),
+    -- totalSpent nets refunds (unfiltered sum — a return receipt's negative
+    -- total already reduces this, same as Top stores / By month below).
+    'totalSpent',     coalesce((select sum(total) from filtered), 0),
+    -- receiptCount excludes return receipts — they aren't a "shopping trip,"
+    -- so counting them here would understate Avg per trip and mislabel "X
+    -- receipts" displays. Total dollars above still nets their amount; only
+    -- the trip *count* excludes them.
+    'receiptCount',   (select count(*) from filtered where total > 0),
+    -- Total refunded this period, shown as its own figure rather than netted
+    -- into any one category — a return receipt's category doesn't reliably
+    -- match what was actually returned (see byCategory below), so blending
+    -- it in would misattribute spend across categories.
+    'totalRefunded',  coalesce((select -sum(total) from filtered where total < 0), 0),
+    'totalSaved',     coalesce((select sum(ri.discount_amount) from receipt_items ri join filtered f on f.id = ri.receipt_id), 0),
     'byBrand',      coalesce((select jsonb_agg(jsonb_build_object('brand', brand, 'name', name, 'count', cnt, 'positiveCount', pos_cnt, 'total', tot) order by tot desc) from brand_agg), '[]'::jsonb),
     'byMonth',      coalesce((select jsonb_agg(jsonb_build_object('month', month, 'total', tot) order by month) from month_agg), '[]'::jsonb),
     'byPayer',      coalesce((select jsonb_agg(jsonb_build_object('payer', paid_by, 'count', cnt, 'total', tot) order by tot desc) from payer_agg), '[]'::jsonb),
@@ -440,6 +488,65 @@ begin
     or (g.item_code is null and h.item_code is null and h.store_name = g.store_name and h.name = g.name)
   order by h.purchase_date desc;
 end;
+$$;
+
+
+-- Returns search (Prices → ↩ Returns tab). Sourced from item_returns, not
+-- item_purchase_history — entirely separate dataset from the main item
+-- search, so this never touches (or risks corrupting) that search's price-
+-- trend math. No two-step narrow-then-fetch here like search_item_history:
+-- total return volume is inherently small (most receipts are never
+-- returned), so a single capped query is enough — no truncation risk at
+-- realistic scale.
+create or replace function search_returned_items(
+  p_query     text,
+  p_brand     text default null,
+  p_date_from date default null,
+  p_date_to   date default null
+)
+returns setof item_returns
+language plpgsql
+stable
+as $$
+declare
+  is_code boolean := p_query ~ '^[0-9]+$';
+begin
+  return query
+  select h.*
+  from item_returns h
+  where
+    case
+      when is_code then h.item_code = p_query
+      else               h.name ilike '%' || p_query || '%'
+    end
+    and (p_brand     is null or p_brand = 'all' or h.brand = p_brand)
+    and (p_date_from is null or h.return_date >= p_date_from)
+    and (p_date_to   is null or h.return_date <= p_date_to)
+  order by h.return_date desc
+  limit 200;
+end;
+$$;
+
+
+-- Total refunded in a date range — powers the "Refunded" figure shown
+-- alongside category/budget breakdowns (see get_spending_stats above for
+-- why refunds aren't netted directly into category totals). Used by the
+-- Budget tab, which is scoped to a calendar month rather than the Finance
+-- page's arbitrary date range (already covered by get_spending_stats'
+-- totalRefunded field).
+create or replace function get_refund_total(
+  p_date_from date default null,
+  p_date_to   date default null
+)
+returns numeric
+language sql
+stable
+as $$
+  select coalesce(-sum(total), 0)
+  from receipts
+  where total < 0
+    and (p_date_from is null or purchase_date >= p_date_from)
+    and (p_date_to   is null or purchase_date <= p_date_to);
 $$;
 
 

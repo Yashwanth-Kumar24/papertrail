@@ -1,9 +1,9 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems, getReturnCandidates, getDistinctBrands } from '@/lib/queries'
+import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { ItemHistory } from '@/lib/types'
+import type { ItemHistory, ReturnedItem } from '@/lib/types'
 import { BRAND_LABELS } from '@/lib/types'
 
 const PRICES_BRAND_KEY = 'prices_brand_filter'
@@ -128,8 +128,29 @@ function ReturnRow({ item }: { item: ItemHistory }) {
   )
 }
 
+function RefundRow({ item }: { item: ReturnedItem }) {
+  return (
+    <tr>
+      <td><span className="code-badge">{item.item_code ?? '—'}</span></td>
+      <td style={{fontWeight:500}}>{item.name}</td>
+      <td style={{color:'var(--ink2)',fontSize:12}}>
+        {item.store_name}<br/>
+        <span style={{fontSize:11}}>{fmt(item.return_date)}</span>
+      </td>
+      <td style={{textAlign:'right',fontFamily:'var(--mono)',fontWeight:600,color:'var(--red-tx)'}}>
+        −{money(item.refund_amount)}
+      </td>
+      <td>
+        <Link href={`/receipts/${item.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}}>
+          Receipt →
+        </Link>
+      </td>
+    </tr>
+  )
+}
+
 function ItemsPageContent() {
-  const [mode,       setMode]       = useState<'search' | 'returns'>('search')
+  const [mode,       setMode]       = useState<'search' | 'returns' | 'refunds'>('search')
   const [query,      setQuery]      = useState('')
   const [brandFilter,setBrandFilter]= useState<string>(() => {
     if (typeof window === 'undefined') return ''
@@ -145,6 +166,17 @@ function ItemsPageContent() {
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
+  // ↩ Refunds tab — a separate search entirely, sourced from item_returns
+  // instead of item_purchase_history (see searchReturnedItems in
+  // lib/queries.ts). Not to be confused with "returns" above, which is
+  // actually the "↑ Price alerts" mode (current price drops, an opportunity
+  // to return-and-rebuy) — this one is "what did I actually return."
+  const [refundQuery,    setRefundQuery]    = useState('')
+  const [refundResults,  setRefundResults]  = useState<ReturnedItem[]>([])
+  const [refundLoading,  setRefundLoading]  = useState(false)
+  const [refundSearched, setRefundSearched] = useState(false)
+  const refundDebounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
   useEffect(() => {
     getDistinctBrands().then(setBrandOptions).catch(() => {})
   }, [])
@@ -152,7 +184,8 @@ function ItemsPageContent() {
   function updateBrandFilter(val: string) {
     setBrandFilter(val)
     localStorage.setItem(PRICES_BRAND_KEY, val)
-    if (query.trim()) run(query, val)
+    if (mode === 'refunds') { if (refundQuery.trim()) runRefundSearch(refundQuery, val) }
+    else if (query.trim()) run(query, val)
   }
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -167,6 +200,17 @@ function ItemsPageContent() {
     }, 350)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounce, brandFilter])
+
+  const runRefundSearch = useCallback((q: string, brand?: string) => {
+    if (!q.trim()) { setRefundResults([]); setRefundSearched(false); return }
+    clearTimeout(refundDebounce.current)
+    refundDebounce.current = setTimeout(async () => {
+      setRefundLoading(true); setRefundSearched(true)
+      const b = brand !== undefined ? brand : brandFilter
+      searchReturnedItems(q, b || undefined).then(setRefundResults).finally(() => setRefundLoading(false))
+    }, 350)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refundDebounce, brandFilter])
 
   useEffect(() => {
     const q = searchParams.get('q')
@@ -192,17 +236,24 @@ function ItemsPageContent() {
     getReturnCandidates().then(r => { setReturns(r); retFetchedAt.current = Date.now() }).finally(() => setRetLoading(false))
   }
 
+  function enterRefunds() {
+    setMode('refunds')
+    router.replace('/prices?mode=refunds')
+  }
+
   return (
     <main className="page">
       <div className="pg-head">
         <span className="pg-title">Prices</span>
         <span className="pg-sub">
-          {mode === 'search' ? 'Search across all receipts' : `${returns.length} return opportunit${returns.length !== 1 ? 'ies' : 'y'} found`}
+          {mode === 'search'   ? 'Search across all receipts'
+            : mode === 'returns' ? `${returns.length} return opportunit${returns.length !== 1 ? 'ies' : 'y'} found`
+            : 'Search items you\'ve returned'}
         </span>
       </div>
 
       {/* Mode toggle */}
-      <div style={{display:'flex',gap:8,marginBottom:16}}>
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
         <button
           onClick={() => { setMode('search'); router.replace(query ? `/prices?q=${encodeURIComponent(query)}` : '/prices') }}
           style={{
@@ -227,27 +278,43 @@ function ItemsPageContent() {
         >
           ↑ Price alerts
         </button>
+        <button
+          onClick={enterRefunds}
+          style={{
+            fontSize:13,padding:'6px 16px',borderRadius:999,border:'1px solid var(--border2)',
+            background: mode === 'refunds' ? '#92400E' : 'transparent',
+            color:      mode === 'refunds' ? '#fff' : 'var(--ink2)',
+            fontWeight: mode === 'refunds' ? 600 : 400,
+            cursor:'pointer',fontFamily:'var(--sans)',
+          }}
+        >
+          ↩ Refunds
+        </button>
       </div>
+
+      {/* Brand filter — shared across all three modes */}
+      {mode !== 'returns' && (
+        <div style={{marginBottom:12}}>
+          <select
+            value={brandFilter}
+            onChange={e => updateBrandFilter(e.target.value)}
+            className="fsel"
+            style={{fontSize:13,padding:'6px 10px'}}
+          >
+            <option value="">All stores</option>
+            {brandOptions.filter(b => b !== 'other').map(b => (
+              <option key={b} value={b}>{BRAND_LABELS[b] ?? b}</option>
+            ))}
+            {brandOptions.includes('other') && (
+              <option value="other">Other</option>
+            )}
+          </select>
+        </div>
+      )}
 
       {/* Search mode */}
       {mode === 'search' && (
         <>
-          <div style={{marginBottom:12}}>
-            <select
-              value={brandFilter}
-              onChange={e => updateBrandFilter(e.target.value)}
-              className="fsel"
-              style={{fontSize:13,padding:'6px 10px'}}
-            >
-              <option value="">All stores</option>
-              {brandOptions.filter(b => b !== 'other').map(b => (
-                <option key={b} value={b}>{BRAND_LABELS[b] ?? b}</option>
-              ))}
-              {brandOptions.includes('other') && (
-                <option value="other">Other</option>
-              )}
-            </select>
-          </div>
           <div className="search-wrap">
             <div className="sinput">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -306,7 +373,7 @@ function ItemsPageContent() {
         </>
       )}
 
-      {/* Returns mode */}
+      {/* Returns mode (price alerts) */}
       {mode === 'returns' && (
         <>
           {retLoading && <div className="empty"><p style={{color:'var(--ink3)'}}>Scanning price history…</p></div>}
@@ -361,6 +428,58 @@ function ItemsPageContent() {
                 )}
               </div>
             </>
+          )}
+        </>
+      )}
+
+      {/* Refunds mode — search items actually returned */}
+      {mode === 'refunds' && (
+        <>
+          <div className="search-wrap">
+            <div className="sinput">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input
+                suppressHydrationWarning
+                value={refundQuery}
+                onChange={e => { const value = e.target.value; setRefundQuery(value); runRefundSearch(value) }}
+                placeholder="Name or item code…"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+
+          {!refundSearched && (
+            <div className="empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 14l-4-4 4-4"/><path d="M5 10h11a4 4 0 0 1 0 8h-1"/>
+              </svg>
+              <p style={{fontWeight:500}}>Search items you've returned</p>
+              <p style={{fontSize:13}}>Name → <strong>SWIFFER</strong> &nbsp;·&nbsp; Code → <strong>1456660</strong></p>
+              <p style={{fontSize:12,marginTop:4,color:'var(--ink3)'}}>Separate from the main Search — includes only returned items</p>
+            </div>
+          )}
+
+          {refundLoading && <div className="empty"><p style={{color:'var(--ink3)'}}>Searching…</p></div>}
+
+          {!refundLoading && refundSearched && refundResults.length === 0 && (
+            <div className="empty"><p style={{fontWeight:500}}>No returned items found</p><p style={{fontSize:13}}>Try a different name or code</p></div>
+          )}
+
+          {!refundLoading && refundResults.length > 0 && (
+            <div className="tbl-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Code</th><th>Item</th><th>Store · Date</th>
+                    <th style={{textAlign:'right'}}>Refunded</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {refundResults.map(item => <RefundRow key={item.id} item={item}/>)}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}

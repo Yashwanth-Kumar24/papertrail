@@ -1,12 +1,16 @@
 'use client'
 import { useEffect, useState, useCallback, Activity } from 'react'
 import Link from 'next/link'
-import { getSpendingStats, getTopReceipts, getDailySpending, getReceiptsByDate, getBudgets, upsertBudget, getRecurring, getRecurringPaymentsForPeriod, getCategorySpendingForMonth } from '@/lib/queries'
+import { getSpendingStats, getTopReceipts, getDailySpending, getReceiptsByDate, getBudgets, upsertBudget, getRecurring, getRecurringPaymentsForPeriod, getCategorySpendingForMonth, getRefundTotal } from '@/lib/queries'
 import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/lib/types'
 import type { Budget, Receipt, RecurringBill } from '@/lib/types'
 import ExportButton from '@/components/ExportButton'
 
 const money    = (n: number) => `$${Number(n).toFixed(2)}`
+// totalSpent (and, filtered to a returns-heavy period, other net figures)
+// can go negative once refunds are netted in — render that as −$X rather
+// than the ugly "$-79.16" a plain money() would produce.
+const moneySigned = (n: number) => n < 0 ? `−${money(Math.abs(n))}` : money(n)
 const fmt      = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 const fmtMonth = (ym: string) => {
   const [y, m] = ym.split('-')
@@ -306,6 +310,7 @@ function BudgetTab() {
   const [spending,      setSpending]      = useState<Record<string, number>>({})
   const [prevSpending,  setPrevSpending]  = useState<Record<string, number>>({})
   const [recurringBills,setRecurringBills]= useState<RecurringBill[]>([])
+  const [refunded,      setRefunded]      = useState(0)
   const [editing,       setEditing]       = useState(false)
   const [draftAmts,     setDraftAmts]     = useState<Record<string, string>>({})
   const [draftActive,   setDraftActive]   = useState<Record<string, boolean>>({})
@@ -320,15 +325,21 @@ function BudgetTab() {
   const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     .toLocaleDateString('en-US', { month: 'short' })
 
+  // Current month's date bounds, for the refund total — matches the range
+  // getCategorySpendingForMonth(month) computes internally.
+  const monthFrom = `${month}-01`
+  const monthTo   = `${month}-${String(new Date(Number(month.slice(0,4)), Number(month.slice(5,7)), 0).getDate()).padStart(2,'0')}`
+
   const load = useCallback(async () => {
-    const [b, s, sp, r] = await Promise.all([
+    const [b, s, sp, r, ref] = await Promise.all([
       getBudgets(),
       getCategorySpendingForMonth(month),
       getCategorySpendingForMonth(lastMonthKey),
       getRecurring(),
+      getRefundTotal(monthFrom, monthTo),
     ])
-    setBudgets(b); setSpending(s); setPrevSpending(sp); setRecurringBills(r)
-  }, [month, lastMonthKey])
+    setBudgets(b); setSpending(s); setPrevSpending(sp); setRecurringBills(r); setRefunded(ref)
+  }, [month, lastMonthKey, monthFrom, monthTo])
 
   useEffect(() => { load() }, [load])
 
@@ -502,6 +513,13 @@ function BudgetTab() {
         <>
           {/* ── Variable spending section ── */}
           <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:10}}>Variable spending</div>
+
+          {refunded > 0 && (
+            <div style={{fontSize:11,color:'var(--ink3)',marginBottom:10,fontStyle:'italic'}}>
+              ↩ {money(refunded)} refunded this month — not included in the category totals below
+              (a return often spans several original categories)
+            </div>
+          )}
 
           {activeBudgets.length === 0 ? (
             <div className="empty" style={{padding:'40px 24px',marginBottom:24}}>
@@ -766,7 +784,11 @@ function SummaryTab({ stats, dateFrom, dateTo }: { stats: Stats; dateFrom: strin
 
       {/* Key metrics */}
       <div className="stat-grid" style={{marginBottom:20}}>
-        <div className="stat-card"><div className="stat-label">Total spent</div><div className="stat-val" style={{fontSize:20}}>{money(stats.totalSpent)}</div></div>
+        <div className="stat-card">
+          <div className="stat-label">Total spent</div>
+          <div className="stat-val" style={{fontSize:20,color:stats.totalSpent<0?'var(--red-tx)':'inherit'}}>{moneySigned(stats.totalSpent)}</div>
+          {stats.totalRefunded > 0 && <div className="stat-sub" style={{color:'var(--red-tx)'}}>−{money(stats.totalRefunded)} refunded</div>}
+        </div>
         <div className="stat-card"><div className="stat-label">Receipts</div><div className="stat-val">{stats.receiptCount}</div></div>
         <div className="stat-card"><div className="stat-label">Avg per trip</div><div className="stat-val" style={{fontSize:20}}>{money(stats.avgPerTrip)}</div></div>
         <div className="stat-card"><div className="stat-label">Total saved</div><div className="stat-val" style={{color:'var(--green)',fontSize:20}}>{money(stats.totalSaved)}</div></div>
@@ -776,6 +798,12 @@ function SummaryTab({ stats, dateFrom, dateTo }: { stats: Stats; dateFrom: strin
         {/* Top categories */}
         <div className="summary-card">
           <div className="summary-card-title">By category</div>
+          {stats.totalRefunded > 0 && (
+            <div style={{fontSize:11,color:'var(--ink3)',marginBottom:8,fontStyle:'italic'}}>
+              ↩ {money(stats.totalRefunded)} refunded this period — not attributed to a category above
+              (a return often spans several original categories)
+            </div>
+          )}
           {stats.byCategory.length === 0 ? (
             <p style={{fontSize:13,color:'var(--ink3)'}}>No data</p>
           ) : stats.byCategory.map(c => (
@@ -904,7 +932,11 @@ function AnalyticsTab({ stats }: { stats: Stats }) {
     <div>
       {/* Stats */}
       <div className="stat-grid" style={{marginBottom:20}}>
-        <div className="stat-card"><div className="stat-label">Total spent</div><div className="stat-val" style={{fontSize:20}}>{money(stats.totalSpent)}</div></div>
+        <div className="stat-card">
+          <div className="stat-label">Total spent</div>
+          <div className="stat-val" style={{fontSize:20,color:stats.totalSpent<0?'var(--red-tx)':'inherit'}}>{moneySigned(stats.totalSpent)}</div>
+          {stats.totalRefunded > 0 && <div className="stat-sub" style={{color:'var(--red-tx)'}}>−{money(stats.totalRefunded)} refunded</div>}
+        </div>
         <div className="stat-card"><div className="stat-label">Receipts</div><div className="stat-val">{stats.receiptCount}</div><div className="stat-sub">across {stats.byBrand.length} store{stats.byBrand.length!==1?'s':''}</div></div>
         <div className="stat-card"><div className="stat-label">Avg per trip</div><div className="stat-val" style={{fontSize:20}}>{money(stats.avgPerTrip)}</div></div>
         <div className="stat-card"><div className="stat-label">Total saved</div><div className="stat-val" style={{color:'var(--green)',fontSize:20}}>{money(stats.totalSaved)}</div><div className="stat-sub">via discounts</div></div>

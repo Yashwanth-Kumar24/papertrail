@@ -148,6 +148,23 @@ export interface ItemHistory {
   }
 }
 
+// A single returned line item — from item_returns (the complement of
+// item_purchase_history), used by the Prices → Returns search tab.
+export interface ReturnedItem {
+  id: string
+  receipt_id: string
+  item_code?: string
+  name: string
+  refund_amount: number
+  return_date: string
+  purchase_time?: string
+  brand: string
+  store_name: string
+  location?: string
+  transaction_id?: string
+  paid_by?: string
+}
+
 export const BRAND_LABELS: Record<string, string> = {
   'costco':      'Costco Wholesale',
   'walmart':     'Walmart',
