@@ -502,6 +502,15 @@ $$;
 -- total return volume is inherently small (most receipts are never
 -- returned), so a single capped query is enough — no truncation risk at
 -- realistic scale.
+--
+-- Matches item_code OR name unconditionally (not "if query looks numeric,
+-- ONLY check item_code") — Costco's return-line data can put garbled numeric
+-- fragments in the name field itself (e.g. a line named "/2534" whose real
+-- item_code is unrelated, like 384182), so a purely-numeric query needs to
+-- still be checked against the name too, or a visibly-matching row silently
+-- returns nothing. Deliberately scoped to this function only — the main
+-- Search tab (search_item_history) is untouched, its names come from the AI
+-- parser and don't have this failure mode in practice.
 create or replace function search_returned_items(
   p_query     text,
   p_brand     text default null,
@@ -512,21 +521,18 @@ returns setof item_returns
 language plpgsql
 stable
 as $$
-declare
-  is_code boolean := p_query ~ '^[0-9]+$';
 begin
   return query
   select h.*
   from item_returns h
   where
-    case
-      when is_code then h.item_code = p_query
-      else               h.name ilike '%' || p_query || '%'
-    end
+    (h.item_code = p_query or h.name ilike '%' || p_query || '%')
     and (p_brand     is null or p_brand = 'all' or h.brand = p_brand)
     and (p_date_from is null or h.return_date >= p_date_from)
     and (p_date_to   is null or h.return_date <= p_date_to)
-  order by h.return_date desc
+  -- exact item_code matches first, so a precise code search still feels
+  -- precise even though name-matching now runs alongside it
+  order by (h.item_code = p_query) desc, h.return_date desc
   limit 200;
 end;
 $$;
