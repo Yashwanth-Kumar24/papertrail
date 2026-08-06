@@ -1,10 +1,10 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands } from '@/lib/queries'
+import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getPriceAlertClaimsSummary } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ItemHistory, ReturnedItem } from '@/lib/types'
-import { BRAND_LABELS } from '@/lib/types'
+import { BRAND_LABELS, PAYERS, PAYER_COLORS } from '@/lib/types'
 
 const PRICES_BRAND_KEY = 'prices_brand_filter'
 
@@ -70,7 +70,7 @@ function ItemRow({ item }: { item: ItemHistory }) {
   )
 }
 
-function ReturnRow({ item }: { item: ItemHistory }) {
+function ReturnRow({ item, onClaim }: { item: ItemHistory; onClaim: (item: ItemHistory) => void }) {
   const [open, setOpen]   = useState(false)
   const latest            = item.purchases[0]
   const expensive         = item.max_price_purchase!
@@ -108,6 +108,16 @@ function ReturnRow({ item }: { item: ItemHistory }) {
             Return receipt →
           </Link>
         </td>
+        {/* Claim — logs that this was acted on, so it stops showing (return)
+            or starts comparing at its corrected price (price match) */}
+        <td>
+          <button
+            onClick={e => { e.stopPropagation(); onClaim(item) }}
+            style={{fontSize:11,fontWeight:600,padding:'4px 10px',borderRadius:999,border:'1px solid var(--green)',background:'none',color:'var(--green)',cursor:'pointer',whiteSpace:'nowrap'}}
+          >
+            ✓ Claim
+          </button>
+        </td>
       </tr>
       {open && item.purchases.map((p, i) => (
         <tr key={i} style={{background:'var(--cream)'}}>
@@ -122,9 +132,118 @@ function ReturnRow({ item }: { item: ItemHistory }) {
               Receipt →
             </Link>
           </td>
+          <td></td>
         </tr>
       ))}
     </>
+  )
+}
+
+// ── Claim modal ─────────────────────────────────────────────
+// Logs that a Price Alert row was acted on. Price match is only offered
+// within Costco's ~30-day price-adjustment window; past that, only Return
+// is available. Amount defaults to the alert's own savings figure but is
+// editable — it represents money recovered either way (see claimPriceAlert
+// docs in lib/queries.ts for why that framing was chosen over storing the
+// new price directly).
+function ClaimModal({ item, onClose, onClaimed }: {
+  item: ItemHistory
+  onClose: () => void
+  onClaimed: () => void
+}) {
+  const expensive = item.max_price_purchase!
+  const savings   = item.max_price - item.latest_price
+  const daysSince = Math.floor((Date.now() - new Date(expensive.purchase_date).getTime()) / 86400000)
+  const canPriceMatch = daysSince <= 30
+
+  const [claimType, setClaimType] = useState<'return' | 'price_match'>(canPriceMatch ? 'price_match' : 'return')
+  const [amount,    setAmount]    = useState(savings.toFixed(2))
+  const [payer,     setPayer]     = useState(PAYERS[0] ?? '')
+  const [saving,    setSaving]    = useState(false)
+  const [err,       setErr]       = useState('')
+
+  async function confirm() {
+    if (!payer) { setErr('Select who claimed it.'); return }
+    setSaving(true); setErr('')
+    try {
+      await claimPriceAlert(item.item_code!, expensive.receipt_id, claimType, parseFloat(amount) || 0, payer)
+      onClaimed()
+    } catch (e: any) {
+      setErr(e.message ?? 'Failed to save claim.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={onClose}>
+      <div style={{background:'#fff',borderRadius:12,padding:'24px 28px',maxWidth:380,width:'100%'}} onClick={e => e.stopPropagation()}>
+        <h3 style={{fontSize:16,fontWeight:600,marginBottom:4}}>Claim this alert</h3>
+        <p style={{fontSize:12,color:'var(--ink3)',marginBottom:16}}>
+          {item.name} · paid {money(expensive.final_price)} on {fmt(expensive.purchase_date)}
+        </p>
+
+        {err && <div style={{padding:'8px 12px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:8,fontSize:12,marginBottom:12}}>{err}</div>}
+
+        {canPriceMatch ? (
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>What happened?</div>
+            <div style={{display:'flex',gap:8}}>
+              <button
+                onClick={() => setClaimType('price_match')}
+                style={{flex:1,padding:'9px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
+                  border:`2px solid ${claimType==='price_match' ? 'var(--green)' : 'var(--border)'}`,
+                  background: claimType==='price_match' ? 'var(--green-bg)' : 'transparent',
+                  color: claimType==='price_match' ? 'var(--green)' : 'var(--ink2)'}}
+              >↺ Price match</button>
+              <button
+                onClick={() => setClaimType('return')}
+                style={{flex:1,padding:'9px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
+                  border:`2px solid ${claimType==='return' ? 'var(--red-tx)' : 'var(--border)'}`,
+                  background: claimType==='return' ? 'var(--red-bg)' : 'transparent',
+                  color: claimType==='return' ? 'var(--red-tx)' : 'var(--ink2)'}}
+              >↩ Return</button>
+            </div>
+            <div style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>
+              Bought {daysSince}d ago — within Costco's ~30-day price-adjustment window
+            </div>
+          </div>
+        ) : (
+          <div style={{marginBottom:16,padding:'10px 12px',background:'var(--cream2)',borderRadius:8,fontSize:12,color:'var(--ink2)'}}>
+            Bought {daysSince}d ago — outside the price-match window, so this is logged as a return.
+          </div>
+        )}
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Amount recovered</div>
+          <input
+            type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
+            style={{width:'100%',fontSize:14,padding:'7px 10px',border:'1px solid var(--border)',borderRadius:8,fontFamily:'var(--mono)'}}
+          />
+        </div>
+
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Who claimed it?</div>
+          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+            {PAYERS.map(p => (
+              <button key={p} onClick={() => setPayer(p)} style={{
+                padding:'5px 12px',borderRadius:999,fontSize:12,fontWeight:600,cursor:'pointer',
+                border:`2px solid ${payer===p ? PAYER_COLORS[p]?.color : 'var(--border)'}`,
+                background: payer===p ? PAYER_COLORS[p]?.bg : 'transparent',
+                color:      payer===p ? PAYER_COLORS[p]?.color : 'var(--ink2)',
+              }}>{p}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{display:'flex',gap:10}}>
+          <button onClick={onClose} style={{flex:1,padding:'9px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>Cancel</button>
+          <button onClick={confirm} disabled={saving} style={{flex:2,padding:'9px',borderRadius:8,border:'none',background:'var(--green)',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+            {saving ? 'Saving…' : 'Confirm claim'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -162,6 +281,8 @@ function ItemsPageContent() {
   const [returns,      setReturns]      = useState<ItemHistory[]>([])
   const [retLoading,   setRetLoading]   = useState(false)
   const [retFilter,    setRetFilter]    = useState('')
+  const [claimsSummary, setClaimsSummary] = useState({ count: 0, total: 0 })
+  const [claimingItem,  setClaimingItem]  = useState<ItemHistory | null>(null)
   const retFetchedAt = useRef<number>(0)
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -217,12 +338,24 @@ function ItemsPageContent() {
     if (q) { setQuery(q); run(q) }
   }, [searchParams, run])
 
+  // Shared by the mount-restore effect, enterReturns(), and the post-claim
+  // refresh — one place that fetches both the candidate list and the
+  // lifetime claims total together, so they never go out of sync.
+  const loadReturns = useCallback(() => {
+    setRetLoading(true)
+    Promise.all([
+      getReturnCandidates(),
+      getPriceAlertClaimsSummary(),
+    ]).then(([r, summary]) => {
+      setReturns(r); setClaimsSummary(summary); retFetchedAt.current = Date.now()
+    }).finally(() => setRetLoading(false))
+  }, [])
+
   // Restore price alerts mode when navigating back from a receipt
   useEffect(() => {
     if (searchParams.get('mode') === 'returns') {
       setMode('returns')
-      setRetLoading(true)
-      getReturnCandidates().then(r => { setReturns(r); retFetchedAt.current = Date.now() }).finally(() => setRetLoading(false))
+      loadReturns()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once on mount only
@@ -232,8 +365,7 @@ function ItemsPageContent() {
     router.replace('/prices?mode=returns')
     const stale = Date.now() - retFetchedAt.current > 2 * 60 * 1000
     if (!stale && returns.length > 0) return
-    setRetLoading(true)
-    getReturnCandidates().then(r => { setReturns(r); retFetchedAt.current = Date.now() }).finally(() => setRetLoading(false))
+    loadReturns()
   }
 
   function enterRefunds() {
@@ -376,6 +508,20 @@ function ItemsPageContent() {
       {/* Returns mode (price alerts) */}
       {mode === 'returns' && (
         <>
+          {claimingItem && (
+            <ClaimModal
+              item={claimingItem}
+              onClose={() => setClaimingItem(null)}
+              onClaimed={() => { setClaimingItem(null); loadReturns() }}
+            />
+          )}
+
+          {!retLoading && claimsSummary.count > 0 && (
+            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:12,fontSize:13,color:'var(--green)',fontWeight:500}}>
+              ✓ {claimsSummary.count} claimed · {money(claimsSummary.total)} recovered
+            </div>
+          )}
+
           {retLoading && <div className="empty"><p style={{color:'var(--ink3)'}}>Scanning price history…</p></div>}
 
           {!retLoading && returns.length === 0 && (
@@ -405,7 +551,7 @@ function ItemsPageContent() {
                 </div>
               </div>
               <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
-                These items are cheaper now than a previous purchase. Bring the linked receipt to get a refund or rebuy at the lower price. Green days = likely within return window.
+                These items are cheaper now than a previous purchase. Bring the linked receipt to get a refund or rebuy at the lower price. Green days = likely within return window. Once you've acted on one, tap <strong>✓ Claim</strong> so it's tracked — a return drops off the list, a price match stays in case the price drops again later.
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -417,10 +563,11 @@ function ItemsPageContent() {
                       <th>Now</th>
                       <th>Save</th>
                       <th></th>
+                      <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item}/>)}
+                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item} onClaim={setClaimingItem}/>)}
                   </tbody>
                 </table>
                 {retFilter && returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())).length === 0 && (

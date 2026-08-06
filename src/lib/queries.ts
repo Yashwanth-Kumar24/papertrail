@@ -624,25 +624,95 @@ export async function replaceReceiptItems(
 }
 
 // ── Return candidates (items where price trended up) ───────
+// Claims-aware: a 'return' claim removes that specific purchase from
+// candidacy permanently (nothing left to compare — the item and the money
+// are both gone); a 'price_match' claim keeps it eligible but at its
+// corrected price (original − money recovered), so a further future price
+// drop can still surface as a new, distinct opportunity. This is the one
+// function both the Prices page and the weekly cron call (see
+// api/cron/price-alert/route.ts), so claimed alerts disappear from both
+// automatically — no separate cron-side bookkeeping needed.
 export async function getReturnCandidates(): Promise<import('./types').ItemHistory[]> {
-  // Step 1: DB function returns only qualifying item_codes (fast, no row limit issues)
+  // Step 1: DB function returns only qualifying item_codes (fast, no row limit issues).
+  // Deliberately claims-unaware — it's a coarse, fast pre-filter; claim
+  // adjustments only ever lower a purchase's effective price, so anything
+  // that fails the raw (unadjusted) check here could never pass after
+  // adjustment either. Precision happens in step 2 below.
   const { data: candidates, error: rpcErr } = await supabase.rpc('get_return_candidates')
   if (rpcErr) throw new Error(rpcErr.message)
 
   const itemCodes = (candidates ?? []).map((c: any) => c.item_code).filter(Boolean) as string[]
   if (!itemCodes.length) return []
 
-  // Step 2: Fetch full purchase history only for those items
-  const { data, error } = await supabase
-    .from('item_purchase_history')
-    .select('*')
-    .in('item_code', itemCodes)
-    .order('purchase_date', { ascending: false })
+  // Step 2: fetch full purchase history + any claims for those items in parallel.
+  const [{ data, error }, claims] = await Promise.all([
+    supabase
+      .from('item_purchase_history')
+      .select('*')
+      .in('item_code', itemCodes)
+      .order('purchase_date', { ascending: false }),
+    getPriceAlertClaims(itemCodes),
+  ])
   if (error) throw new Error(error.message)
 
-  return groupHistory(data ?? [])
+  const returnedKeys   = new Set(claims.filter(c => c.claim_type === 'return').map(c => `${c.item_code}:${c.receipt_id}`))
+  const priceMatchByKey = new Map(claims.filter(c => c.claim_type === 'price_match').map(c => [`${c.item_code}:${c.receipt_id}`, c.claimed_amount]))
+
+  const adjusted = (data ?? [])
+    .filter((row: any) => !returnedKeys.has(`${row.item_code}:${row.receipt_id}`))
+    .map((row: any) => {
+      const recovered = priceMatchByKey.get(`${row.item_code}:${row.receipt_id}`)
+      return recovered != null
+        ? { ...row, final_price: Math.max(0, Number(row.final_price) - recovered) }
+        : row
+    })
+
+  return groupHistory(adjusted)
     .filter(i => i.purchases.length > 1 && i.max_price > i.latest_price)
     .sort((a, b) => (b.max_price - b.latest_price) - (a.max_price - a.latest_price))
+}
+
+async function getPriceAlertClaims(itemCodes: string[]): Promise<import('./types').PriceAlertClaim[]> {
+  if (!itemCodes.length) return []
+  const { data, error } = await supabase
+    .from('price_alert_claims')
+    .select('item_code, receipt_id, claim_type, claimed_amount')
+    .in('item_code', itemCodes)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as import('./types').PriceAlertClaim[]
+}
+
+// Records that a Price Alert row was acted on. Upsert on (item_code,
+// receipt_id) — re-claiming the same instance (e.g. fixing a wrong claim
+// type) corrects it in place rather than erroring on the unique constraint.
+export async function claimPriceAlert(
+  itemCode: string,
+  receiptId: string,
+  claimType: 'return' | 'price_match',
+  claimedAmount: number,
+  claimedBy?: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('price_alert_claims')
+    .upsert({
+      item_code:      itemCode,
+      receipt_id:     receiptId,
+      claim_type:     claimType,
+      claimed_amount: claimedAmount,
+      claimed_by:     claimedBy ?? null,
+    }, { onConflict: 'item_code,receipt_id' })
+  if (error) throw new Error(error.message)
+}
+
+// Lifetime total shown at the top of the Price Alerts page.
+export async function getPriceAlertClaimsSummary(): Promise<{ count: number; total: number }> {
+  const { data, error } = await supabase.from('price_alert_claims').select('claimed_amount')
+  if (error) throw new Error(error.message)
+  const rows = data ?? []
+  return {
+    count: rows.length,
+    total: rows.reduce((s, c: any) => s + Number(c.claimed_amount), 0),
+  }
 }
 
 // ── Receipts by date (for heatmap day detail) ──────────────

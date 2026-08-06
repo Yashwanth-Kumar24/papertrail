@@ -59,6 +59,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
 - **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt
+  - **✓ Claim** — log that you acted on an alert. Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human action. **Return** removes that specific overpriced purchase from future alerts permanently. **Price match** keeps it eligible, but compares future prices against the corrected (post-match) amount instead of the stale original — so a further price drop later can still surface as a new opportunity. Price match is only offered within Costco's ~30-day price-adjustment window; past that, only Return is available. A running total ("✓ N claimed · $X recovered") shows at the top of the tab
 - **↩ Refunds mode** — a separate search for items you've actually returned (not to be confused with Price alerts above, which is about *current* price drops). Search by name or item code; results show refund amount, date, store, and a link to the return receipt. Sourced from a dedicated dataset that never touches the main search's price-trend data
 - **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
@@ -282,6 +283,13 @@ recurring:
 
 recurring_payments:
   id, recurring_id, paid_by, paid_at, amount, created_at
+
+price_alert_claims:
+  id, item_code, receipt_id,
+  claim_type,       -- 'return' | 'price_match'
+  claimed_amount,   -- money recovered — same meaning for both types
+  claimed_by, created_at
+  -- unique (item_code, receipt_id) — one claim per specific overpriced purchase
 
 -- View used by item search and price alerts (excludes returned items):
 item_purchase_history (joins receipts + receipt_items where final_price >= 0)

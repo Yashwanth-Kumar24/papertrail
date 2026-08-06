@@ -175,6 +175,32 @@ create table recurring_payments (
 );
 
 
+-- ── price_alert_claims ─────────────────────────────────────
+-- A manual, human-entered log of "I acted on this Price Alert" — never
+-- inferred from scanned receipts (a return can happen for unrelated reasons
+-- like spoiled food, and a price match produces no receipt at all, so there
+-- is nothing reliable to infer this from). One row = one specific overpriced
+-- purchase instance (item_code + the receipt it was overpaid on) that's been
+-- resolved. claimed_amount is always "money recovered," regardless of type —
+-- for a return that's the refund; for a price match it's the credited
+-- difference, NOT the new price — which keeps the summary total a plain sum.
+create table price_alert_claims (
+  id             uuid          primary key default gen_random_uuid(),
+  item_code      text          not null,
+  receipt_id     uuid          not null references receipts(id) on delete cascade,
+  -- The specific overpriced purchase being resolved.
+  claim_type     text          not null check (claim_type in ('return', 'price_match')),
+  -- 'return'      -> excluded permanently from future return-candidate checks
+  -- 'price_match' -> stays eligible, compared at (original price - claimed_amount)
+  --                  going forward, so a further future price drop can still
+  --                  surface as a new, distinct opportunity
+  claimed_amount numeric(10,2) not null,
+  claimed_by     text,
+  created_at     timestamptz   not null default now(),
+  unique (item_code, receipt_id)
+);
+
+
 -- ── Indexes ────────────────────────────────────────────────
 create index on receipts(brand);
 create index on receipts(purchase_date desc);
@@ -189,6 +215,7 @@ create index on recurring(active);
 create index on recurring_payments(recurring_id);
 create index on recurring_payments(paid_at desc);
 create index on recurring_payments(paid_by);
+create index on price_alert_claims(item_code);
 
 
 -- ── item_purchase_history (view) ──────────────────────────
@@ -570,6 +597,7 @@ alter table push_subscriptions disable row level security;
 alter table budgets            disable row level security;
 alter table recurring          disable row level security;
 alter table recurring_payments disable row level security;
+alter table price_alert_claims disable row level security;
 
 
 -- ── Duplicate prevention indexes ──────────────────────────
