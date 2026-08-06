@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { saveReceipt } from '@/lib/queries'
+import { saveReceipt, PossibleDuplicateError } from '@/lib/queries'
 import { PAYERS, PAYER_COLORS } from '@/lib/types'
 import type { ParsedReceipt } from '@/lib/types'
 
@@ -668,6 +668,21 @@ export default function CostcoPage() {
           setError('Token expired during import. Paste a fresh token and re-import — already saved receipts will be skipped automatically.')
           failures.push({ barcode, label, reason: 'Token expired (401)' })
           failed++
+          // Every remaining barcode would hit the same 401 — stop attempting
+          // them, but report each honestly instead of silently dropping it
+          // from the result counts. A partial-failure summary should always
+          // account for every submitted item: imported + skipped + failed
+          // must equal the number selected, or "3 failed" quietly hides that
+          // 40 more were never even tried.
+          for (let j = i + 1; j < barcodes.length; j++) {
+            const remainingBarcode  = barcodes[j]
+            const remainingReceipt  = receipts.find(r => r.transactionBarcode === remainingBarcode)
+            const remainingLabel    = remainingReceipt
+              ? `${remainingReceipt.warehouseName} · ${remainingReceipt.transactionDateTime?.slice(0,10) ?? remainingBarcode}`
+              : remainingBarcode
+            failures.push({ barcode: remainingBarcode, label: remainingLabel, reason: 'Not attempted — token expired earlier in this batch' })
+            failed++
+          }
           break
         }
         failures.push({ barcode, label, reason })
@@ -687,7 +702,12 @@ export default function CostcoPage() {
         imported++
         if (Number(d.total) > 0) importedTotal += Number(d.total)
       } catch (e: any) {
-        if (e.message?.includes('already saved')) skipped++
+        // Bulk/unattended import — no per-receipt confirmation is practical here,
+        // so a probable duplicate (PossibleDuplicateError) is treated the same
+        // as a certain one (transaction_id match): skip it. The per-receipt
+        // "save anyway?" override only makes sense on the single-receipt Scan
+        // page, where a human is actually looking at each one.
+        if (e instanceof PossibleDuplicateError || e.message?.includes('already saved')) skipped++
         else {
           failures.push({ barcode, label, reason: e.message ?? 'Save failed' })
           failed++

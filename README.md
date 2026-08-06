@@ -31,6 +31,8 @@ A personal household receipt tracker — scan any store receipt, extract items w
 - **Manual entry** — no receipt? Tap "No receipt? Enter manually" to type everything in by hand
 - **Multi-section scanning** — long receipt? Scan in sections; items merge automatically; header fields (store, date, total) update on each scan
 - **Paid by** — required on every receipt; tracks which household member paid
+- **Save image** — checked by default so the photo is always kept; uncheck to save without it
+- **Duplicate guard** — a retry of the same save (double-click, retry after a dropped connection) is always safe and never creates a second receipt. If a *different* save looks like a likely duplicate (same store, date, and total as an existing receipt — common for gas or gift cards), you'll see a prompt to view the existing one or save anyway, instead of a silent block
 
 ### Expenses
 Two sub-tabs under a single nav item:
@@ -226,13 +228,15 @@ src/
   lib/
     types.ts                    TypeScript interfaces + PAYERS, PAYER_COLORS, BRAND_LABELS
     supabase.ts                 Supabase client
-    queries.ts                  All DB operations + getCycleWindow()
+    queries.ts                  All DB operations + getCycleWindow(); stats/search/spending
+                                 aggregation delegates to Postgres RPC functions (see
+                                 "Database schema" below) rather than aggregating client-side
     ocr.ts                      OCR wrapper — Google Vision or Tesseract fallback
   parsers/
     ai-parser.ts                AI parser — calls /api/parse, normalizes output
     registry.ts                 parseReceipt() + mergeReceipts()
 supabase/
-  schema.sql                    DB schema — run once in Supabase SQL editor
+  schema.sql                    DB schema + RPC functions — run once in Supabase SQL editor
 vercel.json                     Cron schedules — price alert Wed+Sat 9am UTC; budget alert 1st+15th 9am UTC
 ```
 
@@ -249,6 +253,7 @@ receipts:
   category,         -- groceries | household | utilities | dining | entertainment |
                     -- clothing | electronics | pharmacy | insurance | fuel | other
   notes,            -- optional free-text up to 280 chars
+  client_token,     -- client-generated idempotency key; see Duplicate prevention below
   image_urls, raw_ocr_text, created_at
 
 receipt_items:
@@ -269,6 +274,8 @@ budgets:
 recurring:
   id, name, amount, frequency,  -- monthly | annual | weekly | quarterly
   due_day, due_date,
+  -- required per frequency (enforced by a CHECK constraint + BillForm validation):
+  -- monthly needs due_day, annual/quarterly need due_date, weekly needs neither
   paid_by, category, notes, active, created_at
   -- paid status computed at read time from recurring_payments (no last_paid_at column)
 
@@ -283,13 +290,25 @@ item_purchase_history (joins receipts + receipt_items where final_price >= 0)
 
 `paid_by` stores the household member who paid. Values come from the `NEXT_PUBLIC_PAYERS` env var.
 
+### RPC functions
+
+Defined in `schema.sql`, included automatically in a fresh setup. All stats/aggregation and the receipt-items edit flow run through these instead of the client fetching raw rows and reducing them in the browser:
+
+| Function | Used by | Purpose |
+|---|---|---|
+| `replace_receipt_items(receipt_id, items)` | Receipt edit save | Atomic delete+insert — a failed insert can't leave a receipt with zero items |
+| `get_receipt_stats(...)` | Receipts page stat cards | Filter-aware count/total/items/savings, computed in Postgres |
+| `get_spending_stats(date_from, date_to)` | Finance Summary + Analytics | All by-store/month/payer/category breakdowns, computed in Postgres |
+| `search_item_history(query, ...)` | Prices search | Narrows to matching items first, then returns their full history uncapped |
+| `get_return_candidates()` | Prices → Price alerts, weekly cron | Single source of truth for "what counts as a return candidate" — used by both |
+
 ### Duplicate prevention
 
-Two-tier check on every save:
-- **Has transaction ID** → checks `store_name + purchase_date + transaction_id`
-- **No transaction ID** → checks `store_name + purchase_date + total` (+ time if available)
+Two independent mechanisms, not one:
+- **Idempotency** — every scan/import review session generates a `client_token`; retrying the same save (double-click, retry after a dropped connection) is always a safe no-op that returns the original receipt, never a second row or an error. Enforced via a unique index on `client_token`.
+- **Probable-duplicate detection** — a *different* save matching `store_name + purchase_date + total` (+ time if available) is flagged, not blocked: the Scan page shows a "view existing / save anyway" prompt so a genuine coincidence (two gas fill-ups same day) isn't a dead end. A `transaction_id` match (a real Costco barcode or OCR'd transaction number) is still a hard, non-overridable block — that one is a certain identity match, not a heuristic.
 
-Both enforced at the application level and via partial unique indexes in Postgres.
+All three enforced at both the application level and via unique indexes in Postgres.
 
 ---
 
@@ -321,6 +340,8 @@ Paid status is never stored in the database. On every load, `getRecurring()` fet
 - **Weekly** — last 6 days to today
 
 A bill is `paidThisCycle` if any `recurring_payments` row falls within `[cycleStart, cycleEnd]`.
+
+`due_day` (monthly) and `due_date` (annual/quarterly) are required — the form won't save without them, and a DB constraint blocks it too. Without the right one, the exact cycle window above can't be computed; a bill missing it would otherwise fall back to a rolling weekly window regardless of its real frequency, flapping paid status every few days with no error shown. A bill saved before this was enforced falls back to the current calendar month/quarter/year instead — edit it once to fill in the missing field and it computes exactly again.
 
 To drop the old `last_paid_at` column from an existing database:
 ```sql
@@ -390,7 +411,7 @@ On the Finance page (Summary or Analytics tab), tap **↓ Export**. The browser 
 
 ## Batch delete
 
-On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. "Select all" fetches IDs across all pages, not just the current 20. Includes storage image cleanup.
+On the Receipts page, click the checkbox (top-right of each card) to select receipts, then use the red delete bar that appears at the top to delete all selected at once. "Select all" fetches IDs across all pages, not just the current 20. Deletes run in chunks of 150 to stay well under PostgREST request-size limits on very large selections. Includes storage image cleanup.
 
 ---
 

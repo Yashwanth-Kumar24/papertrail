@@ -1,11 +1,12 @@
 'use client'
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { recognizeReceipt } from '@/lib/ocr'
 import { parseReceipt, mergeReceipts } from '@/parsers/registry'
 import type { ParsedReceipt, ParsedItem } from '@/lib/types'
 import { PAYERS, PAYER_COLORS, CATEGORIES, CATEGORY_LABELS, suggestCategory } from '@/lib/types'
-import { saveReceipt, uploadReceiptImage } from '@/lib/queries'
+import { saveReceipt, uploadReceiptImage, PossibleDuplicateError } from '@/lib/queries'
 
 type Step = 'capture' | 'scanning' | 'review' | 'saving'
 
@@ -73,9 +74,20 @@ export default function ScanPage() {
   const [parsed,      setParsed]      = useState<ParsedReceipt | null>(null)
   const [items,       setItems]       = useState<ParsedItem[]>([])
   const [error,       setError]       = useState('')
-  const [saveImg,     setSaveImg]     = useState(false)
+  const [saveImg,     setSaveImg]     = useState(true)
   const [imgFiles,    setImgFiles]    = useState<File[]>([])
   const [manualMode,  setManualMode]  = useState(false)
+  const [dupNotice,   setDupNotice]   = useState<string | null>(null)
+  // One token per review session (survives multi-section merges — they're
+  // still one logical save). Lets saveReceipt() treat a retry of the same
+  // attempt (double-click, retry after a timeout) as a no-op instead of a
+  // second row or an error — see PossibleDuplicateError / clientToken docs
+  // on saveReceipt in lib/queries.ts.
+  const [clientToken, setClientToken] = useState<string>(() => crypto.randomUUID())
+  // Set when saveReceipt() flags a probable (not certain) duplicate by
+  // store+date+total — offers the user a "save anyway" override rather than
+  // silently refusing, since a coincidental match (gas, gift cards) is real.
+  const [duplicateExisting, setDuplicateExisting] = useState<string | null>(null)
   const [editStore,   setEditStore]   = useState('')
   const [location,    setLocation]    = useState('')
   const [editDate,    setEditDate]    = useState('')
@@ -94,7 +106,9 @@ export default function ScanPage() {
       const text   = await recognizeReceipt(file, p => setPct(p))
       const result = await parseReceipt(text)
       setParsed(prev => {
-        const merged = prev ? mergeReceipts(prev, result) : result
+        const { receipt: merged, duplicatesDropped } = prev
+          ? mergeReceipts(prev, result)
+          : { receipt: result, duplicatesDropped: 0 }
         setItems(merged.line_items)
         // Always update header fields — on first scan to populate them,
         // on subsequent scans to reflect the merged receipt (store, total, etc.)
@@ -105,6 +119,9 @@ export default function ScanPage() {
         setEditTotal(merged.total != null ? String(merged.total) : '')
         setEditTax(merged.tax   != null ? String(merged.tax)   : '')
         if (!prev) setEditCategory(suggestCategory(merged.store.brand))
+        setDupNotice(duplicatesDropped > 0
+          ? `Skipped ${duplicatesDropped} item${duplicatesDropped > 1 ? 's' : ''} that looked like a repeat of the previous section's edge. If you actually bought ${duplicatesDropped > 1 ? 'them' : 'it'} twice, use "+ Add item manually" below to add it back.`
+          : null)
         return merged
       })
       setStep('review')
@@ -136,7 +153,8 @@ export default function ScanPage() {
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal(''); setEditPaidBy('')
     setEditTax(''); setEditCategory('other'); setEditNotes('')
-    setManualMode(true); setStep('review'); setError('')
+    setManualMode(true); setStep('review'); setError(''); setDupNotice(null)
+    setDuplicateExisting(null); setClientToken(crypto.randomUUID())
   }
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -170,7 +188,7 @@ export default function ScanPage() {
   function removeItem(idx: number) { setItems(prev => prev.filter((_, i) => i !== idx)) }
   function addItem() { setItems(prev => [...prev, blankItem(prev.length)]) }
 
-  const save = async () => {
+  const save = async (force = false) => {
     if (!parsed || step === 'saving') return
     const resolvedDate = editDate || parsed.purchase_date
     if (!resolvedDate) {
@@ -187,6 +205,7 @@ export default function ScanPage() {
     const filesToUpload = [...imgFiles]
 
     setStep('saving')
+    setDuplicateExisting(null)
     try {
       const final: ParsedReceipt = {
         ...parsed,
@@ -205,7 +224,7 @@ export default function ScanPage() {
           location: location  || undefined,
         }
       }
-      const id = await saveReceipt(final)
+      const id = await saveReceipt(final, { clientToken, force })
 
       if (saveImg && filesToUpload.length > 0) {
         const urls: string[] = []
@@ -238,18 +257,25 @@ export default function ScanPage() {
       // Restore the snapshot — discard any files that were appended after save was triggered.
       // This prevents imgFiles from growing across multiple failed save attempts.
       setImgFiles(filesToUpload)
-      setError(e.message ?? 'Save failed.')
+      if (e instanceof PossibleDuplicateError) {
+        // Soft block — surface the override instead of a dead-end error.
+        setDuplicateExisting(e.existingId)
+        setError('')
+      } else {
+        setError(e.message ?? 'Save failed.')
+      }
       setStep('review')
     }
   }
 
   const reset = () => {
     setParsed(null); setItems([]); setImgFiles([])
-    setSaveImg(false); setStep('capture'); setError('')
+    setSaveImg(true); setStep('capture'); setError('')
     setEditStore(''); setLocation(''); setEditDate('')
     setEditTime(''); setEditTotal(''); setEditTax(''); setEditPaidBy('')
     setEditCategory('other'); setEditNotes('')
-    setManualMode(false)
+    setManualMode(false); setDupNotice(null)
+    setDuplicateExisting(null); setClientToken(crypto.randomUUID())
   }
 
   return (
@@ -365,6 +391,32 @@ export default function ScanPage() {
             {error && (
               <div style={{padding:'8px 12px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:'var(--r)',fontSize:12,marginBottom:12}}>
                 {error}
+              </div>
+            )}
+
+            {dupNotice && (
+              <div style={{padding:'8px 12px',background:'#FEF3C7',color:'#92400E',borderRadius:'var(--r)',fontSize:12,marginBottom:12,lineHeight:1.5}}>
+                {dupNotice}
+              </div>
+            )}
+
+            {duplicateExisting && (
+              <div style={{padding:'10px 12px',background:'#FEF3C7',color:'#92400E',borderRadius:'var(--r)',fontSize:12,marginBottom:12,lineHeight:1.5}}>
+                <div style={{marginBottom:8}}>
+                  A receipt from this store, on this date, for this total already exists. This might be the same
+                  receipt scanned twice, or a genuinely different purchase (e.g. two gas fill-ups the same day).
+                </div>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                  <Link href={`/receipts/${duplicateExisting}`} style={{fontSize:12,fontWeight:600,color:'#92400E',textDecoration:'underline'}}>
+                    View existing receipt →
+                  </Link>
+                  <button
+                    onClick={() => save(true)}
+                    style={{marginLeft:'auto',background:'#92400E',color:'#fff',border:'none',borderRadius:6,padding:'4px 12px',fontSize:12,fontWeight:600,cursor:'pointer'}}
+                  >
+                    Save anyway
+                  </button>
+                </div>
               </div>
             )}
 
@@ -527,7 +579,7 @@ export default function ScanPage() {
                   + Add section
                 </button>
               )}
-              <button className="btn-primary" onClick={save}>
+              <button className="btn-primary" onClick={() => save()}>
                 Save receipt
               </button>
               {!manualMode && (

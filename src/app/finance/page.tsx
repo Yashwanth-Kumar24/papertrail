@@ -1,7 +1,7 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Activity } from 'react'
 import Link from 'next/link'
-import { getSpendingStats, getDailySpending, getReceiptsByDate, getBudgets, upsertBudget, getRecurring, getRecurringPaymentsForPeriod, getCategorySpendingForMonth } from '@/lib/queries'
+import { getSpendingStats, getTopReceipts, getDailySpending, getReceiptsByDate, getBudgets, upsertBudget, getRecurring, getRecurringPaymentsForPeriod, getCategorySpendingForMonth } from '@/lib/queries'
 import { PAYER_COLORS, CATEGORY_LABELS, CATEGORY_COLORS, CATEGORIES } from '@/lib/types'
 import type { Budget, Receipt, RecurringBill } from '@/lib/types'
 import ExportButton from '@/components/ExportButton'
@@ -36,13 +36,10 @@ const PRESETS = [
 function MonthlyDigest({ onDismiss }: { onDismiss: () => void }) {
   const [data, setData] = useState<Stats | null>(null)
   const [prev, setPrev] = useState<number | null>(null)
+  const [biggestReceipt, setBiggestReceipt] = useState<Receipt | null>(null)
 
   useEffect(() => {
     const now  = new Date()
-    const thisM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    const lastM = now.getMonth() === 0
-      ? `${now.getFullYear() - 1}-12`
-      : `${now.getFullYear()}-${String(now.getMonth()).padStart(2, '0')}`
     const lastDay = new Date(now.getFullYear(), now.getMonth(), 0)
     const firstDay = new Date(now.getFullYear(), now.getMonth() - 1, 1)
 
@@ -53,9 +50,11 @@ function MonthlyDigest({ onDismiss }: { onDismiss: () => void }) {
     Promise.all([
       getSpendingStats(toISO(firstDay), toISO(lastDay)),
       getSpendingStats(toISO(prevFirst), toISO(prevLast)),
-    ]).then(([cur, prevStats]) => {
+      getTopReceipts(toISO(firstDay), toISO(lastDay), 1),
+    ]).then(([cur, prevStats, top]) => {
       setData(cur)
       setPrev(prevStats.totalSpent)
+      setBiggestReceipt(top[0] ?? null)
     })
   }, [])
 
@@ -65,7 +64,6 @@ function MonthlyDigest({ onDismiss }: { onDismiss: () => void }) {
   const lastMonthName = new Date(now.getFullYear(), now.getMonth() - 1, 1).toLocaleDateString('en-US', { month: 'long' })
   const delta = prev !== null ? data.totalSpent - prev : null
   const top3  = data.byCategory.slice(0, 3)
-  const biggestReceipt = [...data.receipts].sort((a, b) => Number(b.total) - Number(a.total))[0]
 
   return (
     <div style={{background:'#fff',border:'1px solid var(--border)',borderRadius:'var(--rl)',padding:'16px 20px',marginBottom:20}}>
@@ -756,10 +754,11 @@ function PayerSplitCard({ stats, dateFrom, dateTo }: { stats: Stats; dateFrom: s
 function SummaryTab({ stats, dateFrom, dateTo }: { stats: Stats; dateFrom: string; dateTo: string }) {
   const maxCat   = stats.byCategory[0]?.total ?? 1
   const top5     = stats.byBrand.slice(0, 5)
-  const top3rec  = [...stats.receipts]
-    .filter(r => Number(r.total) > 0)
-    .sort((a, b) => Number(b.total) - Number(a.total))
-    .slice(0, 3)
+  const [top3rec, setTop3rec] = useState<Receipt[]>([])
+
+  useEffect(() => {
+    getTopReceipts(dateFrom || undefined, dateTo || undefined, 3).then(setTop3rec).catch(() => {})
+  }, [dateFrom, dateTo])
 
   return (
     <div>
@@ -881,17 +880,15 @@ function AnalyticsTab({ stats }: { stats: Stats }) {
   }, [showYoY, stats.byMonth])
 
   // Compute store trends — compare most recent month vs previous month for that store.
-  // Requires 3+ receipts total; avoids false ↓95% from near-zero prior-period spend.
+  // Requires 3+ receipts with a positive total (refunds don't count toward
+  // trend confidence — matches the original client-side storeReceipts filter);
+  // byBrand.positiveCount/byStoreMonth are both computed server-side now
+  // (get_spending_stats) instead of filtering the full raw receipts array
+  // per store on every render.
   function storeTrend(storeName: string): { dir: 'up' | 'down' | 'stable'; pct: number } | null {
-    const storeReceipts = stats.receipts.filter(
-      (r: any) => r.store_name.toLowerCase().trim() === storeName.toLowerCase().trim() && Number(r.total) > 0
-    )
-    if (storeReceipts.length < 3) return null
-    const byMonth: Record<string, number> = {}
-    for (const r of storeReceipts) {
-      const m = r.purchase_date.slice(0, 7)
-      byMonth[m] = (byMonth[m] ?? 0) + Number(r.total)
-    }
+    const store = stats.byBrand.find(b => b.name === storeName)
+    if (!store || store.positiveCount < 3) return null
+    const byMonth = stats.byStoreMonth[storeName] ?? {}
     const mths = Object.keys(byMonth).sort()
     if (mths.length < 2) return null
     const last = byMonth[mths[mths.length - 1]]
@@ -1116,22 +1113,50 @@ export default function SpendingPage() {
         )}
       </div>
 
-      {tab === 'budget' ? (
+      {/*
+        Three flat sibling Activity boundaries — not nested. React's docs
+        confirm state/DOM persist and Effects tear down/re-mount correctly
+        for a single Activity boundary switching visible/hidden, but nesting
+        one Activity inside another (as an earlier version of this did, to
+        share the loading/empty gate across Summary+Analytics) hits behavior
+        I haven't been able to confirm from the docs: whether an inner
+        boundary's preserved state survives its OUTER boundary cycling
+        hidden→visible. Rather than ship that assumption on this page,
+        each tab gets its own independent boundary and repeats the same
+        (trivial) loading/empty check — a few duplicated lines is a better
+        trade than an unverified nested-preservation edge case.
+      */}
+      <Activity mode={tab === 'budget' ? 'visible' : 'hidden'}>
         <BudgetTab />
-      ) : loading ? (
-        <div className="empty"><p>Loading…</p></div>
-      ) : !stats || stats.receiptCount === 0 ? (
-        <div className="empty">
-          <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23" strokeLinecap="round"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round"/></svg>
-          <p style={{fontWeight:500}}>No spending in this period</p>
-          <p style={{fontSize:13}}>Try a wider date range</p>
-        </div>
-      ) : (
-        <>
-          {tab === 'summary'   && <SummaryTab   stats={stats} dateFrom={dateFrom} dateTo={dateTo} />}
-          {tab === 'analytics' && <AnalyticsTab stats={stats} />}
-        </>
-      )}
+      </Activity>
+
+      <Activity mode={tab === 'summary' ? 'visible' : 'hidden'}>
+        {loading ? (
+          <div className="empty"><p>Loading…</p></div>
+        ) : !stats || stats.receiptCount === 0 ? (
+          <div className="empty">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23" strokeLinecap="round"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round"/></svg>
+            <p style={{fontWeight:500}}>No spending in this period</p>
+            <p style={{fontSize:13}}>Try a wider date range</p>
+          </div>
+        ) : (
+          <SummaryTab stats={stats} dateFrom={dateFrom} dateTo={dateTo} />
+        )}
+      </Activity>
+
+      <Activity mode={tab === 'analytics' ? 'visible' : 'hidden'}>
+        {loading ? (
+          <div className="empty"><p>Loading…</p></div>
+        ) : !stats || stats.receiptCount === 0 ? (
+          <div className="empty">
+            <svg viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23" strokeLinecap="round"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" strokeLinecap="round"/></svg>
+            <p style={{fontWeight:500}}>No spending in this period</p>
+            <p style={{fontSize:13}}>Try a wider date range</p>
+          </div>
+        ) : (
+          <AnalyticsTab stats={stats} />
+        )}
+      </Activity>
     </main>
   )
 }

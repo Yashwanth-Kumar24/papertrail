@@ -58,8 +58,10 @@ function getDueInfo(bill: RecurringBill): { label: string; color: string; daysUn
 
 // ── Payment history section ────────────────────────────────
 function PaymentHistory({ bill, onChanged }: { bill: RecurringBill; onChanged: () => void }) {
-  const [history,   setHistory]   = useState<RecurringPayment[]>([])
-  const [loading,   setLoading]   = useState(true)
+  const [history,     setHistory]     = useState<RecurringPayment[]>([])
+  const [hasMore,      setHasMore]      = useState(false)
+  const [loading,      setLoading]      = useState(true)
+  const [loadingMore,  setLoadingMore]  = useState(false)
   const [adding,    setAdding]    = useState(false)
   const [newDate,   setNewDate]   = useState(todayISO())
   const [newPayer,  setNewPayer]  = useState(PAYERS[0] ?? '')
@@ -67,11 +69,23 @@ function PaymentHistory({ bill, onChanged }: { bill: RecurringBill; onChanged: (
   const [saving,    setSaving]    = useState(false)
   const [confirmDel,setConfirmDel]= useState<string | null>(null)
 
+  // Resets to the first page — used on mount and after any add/delete, so the
+  // freshest entries are always what's visible after a change.
   const load = useCallback(async () => {
     setLoading(true)
-    try { setHistory(await getRecurringPaymentHistory(bill.id)) }
-    finally { setLoading(false) }
+    try {
+      const { data, hasMore: more } = await getRecurringPaymentHistory(bill.id)
+      setHistory(data); setHasMore(more)
+    } finally { setLoading(false) }
   }, [bill.id])
+
+  async function loadMore() {
+    setLoadingMore(true)
+    try {
+      const { data, hasMore: more } = await getRecurringPaymentHistory(bill.id, history.length)
+      setHistory(prev => [...prev, ...data]); setHasMore(more)
+    } finally { setLoadingMore(false) }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -180,6 +194,18 @@ function PaymentHistory({ bill, onChanged }: { bill: RecurringBill; onChanged: (
           )}
         </div>
       ))}
+
+      {!loading && hasMore && (
+        <div style={{textAlign:'center',marginTop:10}}>
+          <button
+            onClick={loadMore}
+            disabled={loadingMore}
+            style={{background:'none',border:'1px solid var(--border)',borderRadius:'var(--r)',padding:'6px 18px',fontSize:12,color:'var(--ink2)',cursor:'pointer',fontFamily:'var(--sans)'}}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -287,6 +313,15 @@ function BillForm({ initial, onSave, onDelete, onCancel, bill }: {
     if (!form.name.trim()) { setErr('Name is required.'); return }
     if (!form.amount)      { setErr('Amount is required.'); return }
     if (!form.paid_by)     { setErr('Paid by is required.'); return }
+    // Required so getCycleWindow() can compute an exact paid-cycle window —
+    // without it, a monthly/annual/quarterly bill used to silently fall back
+    // to a rolling weekly window, flapping paid status with no error shown.
+    if (form.frequency === 'monthly' && !form.due_day) {
+      setErr('Due day of month is required for monthly bills.'); return
+    }
+    if ((form.frequency === 'annual' || form.frequency === 'quarterly') && !form.due_date) {
+      setErr('Due date is required for annual and quarterly bills.'); return
+    }
     setSaving(true); setErr('')
     try { await onSave(form) } catch(e:any) { setErr(e.message??'Save failed.') }
     finally { setSaving(false) }
@@ -508,10 +543,14 @@ export default function RecurringPage() {
     return !b.paidThisCycle && d.daysUntil !== null && d.daysUntil >= 0 && d.daysUntil <= 3
   }).length
 
-  // Sections
+  // Sections — includes overdue bills (daysUntil < 0) as well as due-within-3-days,
+  // so a missed bill is pinned at the top with everything else needing attention
+  // instead of sitting unremarked in its normal Monthly/Annual/Other section.
+  // (dueSoonCnt above stays scoped to "due this week" only — that's a distinct,
+  // narrower stat.)
   const dueSoon = bills.filter(b => {
     const d = getDueInfo(b)
-    return !b.paidThisCycle && d.daysUntil !== null && d.daysUntil >= 0 && d.daysUntil <= 3
+    return !b.paidThisCycle && d.daysUntil !== null && d.daysUntil <= 3
   })
   const monthly_ = bills.filter(b=>b.frequency==='monthly'&&!dueSoon.includes(b))
   const annual_  = bills.filter(b=>b.frequency==='annual' &&!dueSoon.includes(b))

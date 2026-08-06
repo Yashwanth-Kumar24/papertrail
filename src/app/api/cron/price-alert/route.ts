@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import webpush from 'web-push'
 import { supabase } from '@/lib/supabase'
+import { getReturnCandidates } from '@/lib/queries'
 
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT!,
@@ -29,33 +30,13 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Count return candidates ─────────────────────────────
-    const { data: items, error: itemErr } = await supabase
-      .from('item_purchase_history')
-      .select('item_code, name, final_price, purchase_date')
-      .order('purchase_date', { ascending: false })
-      .limit(2000)
-
-    if (itemErr) throw new Error(itemErr.message)
-
-    // Group by item identity (item_code if present, else name)
-    const groups = new Map<string, { latest: number; max: number }>()
-    for (const row of items ?? []) {
-      const key = row.item_code ?? row.name?.toLowerCase().trim()
-      if (!key) continue
-      const price = Number(row.final_price)
-      if (!groups.has(key)) {
-        groups.set(key, { latest: price, max: price })
-      } else {
-        const g = groups.get(key)!
-        g.max = Math.max(g.max, price)
-      }
-    }
-
-    // Candidate = item bought more than once where max > latest (price dropped — return opportunity)
-    let candidateCount = 0
-    for (const g of groups.values()) {
-      if (g.max > g.latest) candidateCount++
-    }
+    // Calls the exact same function the Prices page uses (getReturnCandidates
+    // in lib/queries.ts, backed by the get_return_candidates() DB function)
+    // so the cron can never disagree with what the app itself shows — a
+    // separate row-capped implementation used to live here and could
+    // silently under-count on a large receipt history.
+    const candidates = await getReturnCandidates()
+    const candidateCount = candidates.length
 
     // No candidates → skip notification (no noise)
     if (candidateCount === 0) {

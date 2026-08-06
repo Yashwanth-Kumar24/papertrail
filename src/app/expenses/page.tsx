@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, Activity } from 'react'
 import ReceiptsPage from '../receipts/page'
 import RecurringPage from '../recurring/page'
 
@@ -32,7 +32,21 @@ export default function ExpensesPage() {
         >Recurring</button>
       </div>
 
-      {tab === 'receipts' ? <ReceiptsPage /> : <RecurringPage />}
+      {/*
+        Both tabs stay mounted via Activity instead of `tab==='x' ? <A/> : <B/>`,
+        which used to fully unmount the inactive tab — losing filters, sort,
+        selection, and scroll position every time you switched away and back.
+        Activity hides the inactive one with display:none and tears down its
+        Effects (so it won't keep fetching/polling in the background), but
+        preserves its component state and DOM; Effects re-run — and data
+        re-fetches — the moment it becomes visible again.
+      */}
+      <Activity mode={tab === 'receipts' ? 'visible' : 'hidden'}>
+        <ReceiptsPage />
+      </Activity>
+      <Activity mode={tab === 'recurring' ? 'visible' : 'hidden'}>
+        <RecurringPage />
+      </Activity>
     </>
   )
 }

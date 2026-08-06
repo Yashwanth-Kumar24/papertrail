@@ -2,9 +2,55 @@ import { supabase } from './supabase'
 import type { Receipt, ParsedReceipt, ItemHistory, ShoppingItem, Budget, RecurringBill, RecurringPayment } from './types'
 
 // ── Save receipt ───────────────────────────────────────────
-export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
+// Two independent problems used to be handled by one mechanism (a hard
+// "already saved" block on store+date+total match), which conflated:
+//
+//  1. IDEMPOTENCY — the same save attempt submitted twice (double-click,
+//     retry after a timeout that may or may not have actually gone through).
+//     This has a deterministic answer: it should never create a second row,
+//     and it should never surface an error either — a retry of the exact
+//     same attempt should just transparently return the same receipt id.
+//     Solved with a client-generated token (same pattern as a Stripe
+//     Idempotency-Key): the caller passes the same `clientToken` on every
+//     attempt of one logical save; the DB has a unique index on it, so a
+//     retry is a no-op recovery, not a race to prevent.
+//
+//  2. PROBABLE DUPLICATE — a genuinely different receipt that happens to
+//     collide with an earlier one on store+date+total (common for gas,
+//     gift cards). This has no deterministic answer, so it should never be
+//     silently blocked — it's surfaced to the caller as a typed
+//     PossibleDuplicateError carrying the existing receipt's id, and the
+//     caller decides whether to show the user a "save anyway?" prompt
+//     (pass `force: true` to bypass just this heuristic check).
+//
+// The exact-identity path (matching transaction_id, e.g. a real Costco
+// barcode) stays a hard, non-overridable block — there's no ambiguity there.
+export class PossibleDuplicateError extends Error {
+  existingId: string
+  constructor(existingId: string) {
+    super('A receipt from this store, on this date, for this total already exists.')
+    this.name = 'PossibleDuplicateError'
+    this.existingId = existingId
+  }
+}
+
+export async function saveReceipt(
+  parsed: ParsedReceipt,
+  opts: { clientToken?: string; force?: boolean } = {},
+): Promise<string> {
+  const { clientToken, force = false } = opts
+
+  // Idempotent replay: this exact save attempt (by client token) already
+  // went through — return the same receipt rather than erroring or duplicating.
+  if (clientToken) {
+    const { data: replay } = await supabase
+      .from('receipts').select('id').eq('client_token', clientToken).maybeSingle()
+    if (replay?.id) return replay.id
+  }
+
   if (parsed.transaction_id) {
-    // Primary: exact match by transaction ID
+    // Exact identity match — never overridable, transaction_id is a real
+    // unique identifier (OCR'd transaction number or Costco barcode).
     const { data: existing, error: existingErr } = await supabase
       .from('receipts')
       .select('id')
@@ -15,8 +61,11 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
 
     if (existingErr) throw new Error(existingErr.message)
     if (existing?.id) throw new Error('This receipt is already saved.')
-  } else {
-    // Fallback: match by store + date + total (+ time if available)
+  } else if (!force) {
+    // Heuristic match — store + date + total (+ time if available). No
+    // identifier can prove two such receipts are the same purchase, so this
+    // is a soft block: callers can retry with force:true once the user
+    // confirms it's genuinely a different receipt.
     let dupQ = supabase
       .from('receipts')
       .select('id')
@@ -29,7 +78,7 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
 
     const { data: existing, error: existingErr } = await dupQ.maybeSingle()
     if (existingErr) throw new Error(existingErr.message)
-    if (existing?.id) throw new Error('This receipt is already saved.')
+    if (existing?.id) throw new PossibleDuplicateError(existing.id)
   }
 
   const { data: rec, error: recErr } = await supabase
@@ -48,11 +97,24 @@ export async function saveReceipt(parsed: ParsedReceipt): Promise<string> {
       category:       parsed.category       ?? 'other',
       notes:          parsed.notes          ?? null,
       raw_ocr_text:   parsed.raw_ocr_text,
+      client_token:   clientToken ?? null,
     })
     .select('id')
     .single()
 
-  if (recErr) throw new Error(recErr.message)
+  if (recErr) {
+    // Concurrent identical retry: both requests passed the pre-check above
+    // before either commit landed, and the unique index on client_token
+    // caught it at insert time instead. Recover gracefully — same outcome
+    // as the pre-check catching it up front. (A pg unique-violation is
+    // SQLSTATE 23505; postgrest-js surfaces it on error.code.)
+    if (clientToken && (recErr as any).code === '23505') {
+      const { data: replay } = await supabase
+        .from('receipts').select('id').eq('client_token', clientToken).maybeSingle()
+      if (replay?.id) return replay.id
+    }
+    throw new Error(recErr.message)
+  }
 
   const rows = parsed.line_items.map(li => ({
     receipt_id:      rec.id,
@@ -99,6 +161,10 @@ const PAGE_SIZE = 20
 export type ReceiptSort = 'date_desc' | 'date_asc' | 'total_desc' | 'total_asc'
 
 // ── Get receipts list (paginated, with item count) ─────────
+// Accepts an optional AbortSignal so the caller can cancel an in-flight
+// request when a newer one supersedes it (rapid filter/sort changes) —
+// the actual network request is cancelled, not just its result discarded,
+// which matters once this is running against a large receipt history.
 export async function getReceipts(
   storeName?: string,
   dateFrom?: string,
@@ -108,6 +174,7 @@ export async function getReceipts(
   sortBy: ReceiptSort = 'date_desc',
   source?: string,
   category?: string,
+  signal?: AbortSignal,
 ): Promise<{ data: Receipt[]; totalCount: number }> {
   let q = supabase
     .from('receipts')
@@ -125,6 +192,8 @@ export async function getReceipts(
   if (sortBy === 'date_asc')   q = q.order('purchase_date', { ascending: true  }).order('created_at', { ascending: true  })
   if (sortBy === 'total_desc') q = q.order('total', { ascending: false }).order('purchase_date', { ascending: false })
   if (sortBy === 'total_asc')  q = q.order('total', { ascending: true  }).order('purchase_date', { ascending: false })
+
+  if (signal) q = q.abortSignal(signal)
 
   const { data, error, count } = await q
   if (error) throw new Error(error.message)
@@ -164,41 +233,50 @@ export async function getReceiptMeta(): Promise<{ store_name: string; purchase_d
 }
 
 // ── Stats (filter-aware) ───────────────────────────────────
-export async function getStats(storeName?: string, dateFrom?: string, dateTo?: string, paidBy?: string, source?: string, category?: string) {
-  let rq = supabase.from('receipts').select('id, total')
-  if (storeName) rq = rq.eq('store_name', storeName)
-  if (dateFrom)  rq = rq.gte('purchase_date', dateFrom)
-  if (dateTo)    rq = rq.lte('purchase_date', dateTo)
-  if (paidBy)    rq = rq.eq('paid_by', paidBy)
-  if (source)    rq = rq.eq('source', source)
-  if (category)  rq = rq.eq('category', category)
-  const { data: recs } = await rq
-
-  const ids    = (recs ?? []).map((r: any) => r.id)
-  const total  = (recs ?? []).reduce((s: number, r: any) => s + Number(r.total), 0)
-
-  if (!ids.length) return { receipts: 0, total: 0, items: 0, savings: 0 }
-
-  const { data: items, count: itemCount } = await supabase
-    .from('receipt_items')
-    .select('discount_amount', { count: 'exact' })
-    .in('receipt_id', ids)
-
-  const savings = (items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
-  return { receipts: ids.length, total, items: itemCount ?? 0, savings }
+// Computed entirely in Postgres (get_receipt_stats in schema.sql) instead of
+// pulling every matching receipt id to the client and re-querying with .in() —
+// that two-round-trip shape doesn't scale and risks PostgREST/URL length
+// limits once the filtered set runs into the thousands.
+export async function getStats(storeName?: string, dateFrom?: string, dateTo?: string, paidBy?: string, source?: string, category?: string, signal?: AbortSignal) {
+  let q = supabase.rpc('get_receipt_stats', {
+    p_store:     storeName ?? null,
+    p_date_from: dateFrom  ?? null,
+    p_date_to:   dateTo    ?? null,
+    p_paid_by:   paidBy    ?? null,
+    p_source:    source    ?? null,
+    p_category:  category  ?? null,
+  })
+  if (signal) q = q.abortSignal(signal)
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  const row = data?.[0]
+  return {
+    receipts: Number(row?.receipts ?? 0),
+    total:    Number(row?.total    ?? 0),
+    items:    Number(row?.items    ?? 0),
+    savings:  Number(row?.savings  ?? 0),
+  }
 }
 
 // ── Batch delete receipts ─────────────────────────────────
+// Chunked to keep every .in() call's id list well under PostgREST/URL length
+// limits — a "select all N receipts" batch delete can otherwise put thousands
+// of UUIDs into a single query string.
+const DELETE_CHUNK_SIZE = 150
+
 export async function deleteReceipts(ids: string[]): Promise<void> {
   if (!ids.length) return
-  const { data } = await supabase.from('receipts').select('image_urls').in('id', ids)
-  const paths = (data ?? [])
-    .flatMap((r: any) => r.image_urls ?? [])
-    .map((url: string) => { const i = url.indexOf('/receipt-images/'); return i !== -1 ? url.slice(i + 16) : null })
-    .filter(Boolean) as string[]
-  if (paths.length) await supabase.storage.from('receipt-images').remove(paths)
-  const { error } = await supabase.from('receipts').delete().in('id', ids)
-  if (error) throw new Error(error.message)
+  for (let i = 0; i < ids.length; i += DELETE_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + DELETE_CHUNK_SIZE)
+    const { data } = await supabase.from('receipts').select('image_urls').in('id', chunk)
+    const paths = (data ?? [])
+      .flatMap((r: any) => r.image_urls ?? [])
+      .map((url: string) => { const i2 = url.indexOf('/receipt-images/'); return i2 !== -1 ? url.slice(i2 + 16) : null })
+      .filter(Boolean) as string[]
+    if (paths.length) await supabase.storage.from('receipt-images').remove(paths)
+    const { error } = await supabase.from('receipts').delete().in('id', chunk)
+    if (error) throw new Error(error.message)
+  }
 }
 
 // ── Delete receipt ─────────────────────────────────────────
@@ -235,6 +313,12 @@ export async function getDistinctBrands(): Promise<string[]> {
 }
 
 // ── Search items with price history ───────────────────────
+// Two-step, same shape as getReturnCandidates(): search_item_history() first
+// narrows to the (bounded) set of distinct items matching the query/filters,
+// then returns their FULL purchase history with no row cap. The old approach
+// capped at 300 raw rows before grouping, so a broad term (e.g. a common
+// grocery name) could silently truncate an individual item's older purchases
+// once a household's receipt history got large enough.
 export async function searchItems(
   query: string,
   brand?: string,
@@ -244,29 +328,13 @@ export async function searchItems(
 ): Promise<ItemHistory[]> {
   if (!query.trim()) return []
 
-  const q     = query.trim()
-  const isCode  = /^\d+$/.test(q)
-  const isPrice = /^\$?[\d.]+$/.test(q) && q.includes('.')
-
-  let dbq = supabase.from('item_purchase_history').select('*')
-
-  if (isCode && !isPrice) {
-    dbq = dbq.eq('item_code', q)
-  } else if (isPrice) {
-    const price = parseFloat(q.replace('$', ''))
-    dbq = dbq.gte('final_price', price - 1).lte('final_price', price + 1)
-  } else {
-    dbq = dbq.ilike('name', `%${q}%`)
-  }
-
-  if (brand && brand !== 'all') dbq = dbq.eq('brand', brand)
-  if (dateFrom) dbq = dbq.gte('purchase_date', dateFrom)
-  if (dateTo)   dbq = dbq.lte('purchase_date', dateTo)
-  if (priceMax) dbq = dbq.lte('final_price', priceMax)
-
-  dbq = dbq.order('purchase_date', { ascending: false }).limit(300)
-
-  const { data, error } = await dbq
+  const { data, error } = await supabase.rpc('search_item_history', {
+    p_query:     query.trim(),
+    p_brand:     brand && brand !== 'all' ? brand : null,
+    p_date_from: dateFrom ?? null,
+    p_date_to:   dateTo   ?? null,
+    p_price_max: priceMax ?? null,
+  })
   if (error) throw new Error(error.message)
   return groupHistory(data ?? [])
 }
@@ -333,89 +401,51 @@ function groupHistory(rows: any[]): ItemHistory[] {
     .sort((a, b) => b.purchases.length - a.purchases.length)
 }
 
+// All grouping/aggregation now happens in Postgres (get_spending_stats in
+// schema.sql) instead of pulling every receipt (+ every item, for the
+// discount sum) to the browser and reduce()-ing there. "All time" and the
+// YoY toggle used to mean an unbounded full-table fetch on every render.
 export async function getSpendingStats(dateFrom?: string, dateTo?: string) {
-  let q = supabase
-    .from('receipts')
-    .select('id, brand, store_name, location, purchase_date, purchase_time, transaction_id, total, paid_by, category, notes, source')
-    .order('purchase_date', { ascending: false })
-
-  if (dateFrom) q = q.gte('purchase_date', dateFrom)
-  if (dateTo)   q = q.lte('purchase_date', dateTo)
-
-  const { data, error } = await q
+  const { data, error } = await supabase.rpc('get_spending_stats', {
+    p_date_from: dateFrom ?? null,
+    p_date_to:   dateTo   ?? null,
+  })
   if (error) throw new Error(error.message)
 
-  const receipts = (data ?? []) as Receipt[]
-
-  // Total saved — only for receipts in the filtered set
-  const receiptIds = receipts.map(r => r.id)
-  let totalSaved = 0
-  if (receiptIds.length) {
-    const { data: items } = await supabase
-      .from('receipt_items')
-      .select('discount_amount')
-      .in('receipt_id', receiptIds)
-    totalSaved = (items ?? []).reduce((s: number, i: any) => s + Number(i.discount_amount), 0)
-  }
-
-  const totalSpent = receipts.reduce((s, r) => s + Number(r.total), 0)
-  const avgPerTrip = receipts.length ? totalSpent / receipts.length : 0
-
-  // By store — group by store_name so the same store never appears twice
-  // regardless of whether brand normalization differs between scan vs API import
-  const brandMap = new Map<string, { brand: string; name: string; count: number; total: number }>()
-  for (const r of receipts) {
-    const key  = r.store_name.toLowerCase().trim()
-    const prev = brandMap.get(key) ?? { brand: r.brand, name: r.store_name, count: 0, total: 0 }
-    brandMap.set(key, { ...prev, count: prev.count + 1, total: prev.total + Number(r.total) })
-  }
-  const byBrand = [...brandMap.values()]
-    .sort((a, b) => b.total - a.total)
-
-  // By month
-  const monthMap = new Map<string, number>()
-  for (const r of receipts) {
-    const month = r.purchase_date.slice(0, 7) // YYYY-MM
-    monthMap.set(month, (monthMap.get(month) ?? 0) + Number(r.total))
-  }
-  const byMonth = [...monthMap.entries()]
-    .map(([month, total]) => ({ month, total }))
-    .sort((a, b) => a.month.localeCompare(b.month))
-
-  // By payer
-  const payerMap = new Map<string, { count: number; total: number }>()
-  for (const r of receipts) {
-    if (!r.paid_by) continue
-    const prev = payerMap.get(r.paid_by) ?? { count: 0, total: 0 }
-    payerMap.set(r.paid_by, { count: prev.count + 1, total: prev.total + Number(r.total) })
-  }
-  const byPayer = [...payerMap.entries()]
-    .map(([payer, v]) => ({ payer, ...v }))
-    .sort((a, b) => b.total - a.total)
-
-  // By category
-  const categoryMap = new Map<string, { count: number; total: number }>()
-  for (const r of receipts) {
-    if (Number(r.total) <= 0) continue
-    const cat = (r as any).category ?? 'other'
-    const prev = categoryMap.get(cat) ?? { count: 0, total: 0 }
-    categoryMap.set(cat, { count: prev.count + 1, total: prev.total + Number(r.total) })
-  }
-  const byCategory = [...categoryMap.entries()]
-    .map(([category, v]) => ({ category, ...v }))
-    .sort((a, b) => b.total - a.total)
+  const s = (data ?? {}) as any
+  const totalSpent   = Number(s.totalSpent ?? 0)
+  const receiptCount = Number(s.receiptCount ?? 0)
 
   return {
     totalSpent,
-    totalSaved,
-    receiptCount: receipts.length,
-    avgPerTrip,
-    byBrand,
-    byMonth,
-    byPayer,
-    byCategory,
-    receipts,
+    totalSaved:   Number(s.totalSaved ?? 0),
+    receiptCount,
+    avgPerTrip:   receiptCount ? totalSpent / receiptCount : 0,
+    byBrand:      ((s.byBrand ?? []) as any[]).map(b => ({ brand: b.brand, name: b.name, count: Number(b.count), positiveCount: Number(b.positiveCount ?? b.count), total: Number(b.total) })),
+    byMonth:      ((s.byMonth ?? []) as any[]).map(m => ({ month: m.month, total: Number(m.total) })),
+    byPayer:      ((s.byPayer ?? []) as any[]).map(p => ({ payer: p.payer, count: Number(p.count), total: Number(p.total) })),
+    byCategory:   ((s.byCategory ?? []) as any[]).map(c => ({ category: c.category, count: Number(c.count), total: Number(c.total) })),
+    // Per-store monthly totals — { [store_name]: { [YYYY-MM]: total } } —
+    // powers AnalyticsTab.storeTrend() without shipping every raw receipt.
+    byStoreMonth: (s.byStoreMonth ?? {}) as Record<string, Record<string, number>>,
   }
+}
+
+// ── Top N receipts by total, for a date range (biggest-receipt cards) ──
+// A small bounded query — was previously derived by sorting the full
+// getSpendingStats() receipts array client-side.
+export async function getTopReceipts(dateFrom?: string, dateTo?: string, limit = 3): Promise<Receipt[]> {
+  let q = supabase
+    .from('receipts')
+    .select('id, store_name, purchase_date, total, category')
+    .gt('total', 0)
+    .order('total', { ascending: false })
+    .limit(limit)
+  if (dateFrom) q = q.gte('purchase_date', dateFrom)
+  if (dateTo)   q = q.lte('purchase_date', dateTo)
+  const { data, error } = await q
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Receipt[]
 }
 
 // ── Shopping list ──────────────────────────────────────────
@@ -524,26 +554,27 @@ export async function updateReceipt(id: string, data: {
   if (error) throw new Error(error.message)
 }
 
-// ── Replace all items on a receipt (delete + re-insert) ────
+// ── Replace all items on a receipt (delete + re-insert, atomic) ────
+// Runs inside a single Postgres function so a failed insert can never leave
+// the receipt with its items deleted and nothing put back — see
+// replace_receipt_items() in schema.sql.
 export async function replaceReceiptItems(
   receiptId: string,
   items: { item_code?: string; name: string; original_price: number; discount_amount: number; final_price: number; quantity?: number }[],
 ): Promise<void> {
-  const { error: delErr } = await supabase.from('receipt_items').delete().eq('receipt_id', receiptId)
-  if (delErr) throw new Error(delErr.message)
-  if (!items.length) return
-  const rows = items.map((item, i) => ({
-    receipt_id:      receiptId,
+  const payload = items.map(item => ({
     item_code:       item.item_code || null,
     name:            item.name,
     original_price:  item.original_price,
     discount_amount: item.discount_amount,
     final_price:     item.final_price,
     quantity:        item.quantity ?? 1,
-    sort_order:      i,
   }))
-  const { error: insErr } = await supabase.from('receipt_items').insert(rows)
-  if (insErr) throw new Error(insErr.message)
+  const { error } = await supabase.rpc('replace_receipt_items', {
+    p_receipt_id: receiptId,
+    p_items:      payload,
+  })
+  if (error) throw new Error(error.message)
 }
 
 // ── Return candidates (items where price trended up) ───────
@@ -699,10 +730,39 @@ export function getCycleWindow(
     return { cycleStart, cycleEnd }
   }
 
-  // Weekly (or any bill with no due info)
-  const cycleEnd   = new Date(today)
-  const cycleStart = new Date(today); cycleStart.setDate(cycleStart.getDate() - 6)
-  return { cycleStart, cycleEnd }
+  if (bill.frequency === 'weekly') {
+    const cycleEnd   = new Date(today)
+    const cycleStart = new Date(today); cycleStart.setDate(cycleStart.getDate() - 6)
+    return { cycleStart, cycleEnd }
+  }
+
+  // Legacy fallback — a monthly bill with no due_day, or an annual/quarterly
+  // bill with no due_date. BillForm now requires the right field for each
+  // frequency (and the DB has a matching CHECK constraint), so this can only
+  // be hit by a bill saved before that validation existed. It used to fall
+  // through to the weekly 6-day window above, silently reclassifying e.g. a
+  // monthly bill's paid status onto a rolling-week cadence with no error
+  // shown anywhere — flapping between "paid"/"not paid" every few days.
+  // Falling back to the current calendar month/quarter/year is a materially
+  // less wrong default for exactly the cases this can still occur.
+  if (bill.frequency === 'annual') {
+    return {
+      cycleStart: new Date(today.getFullYear(), 0, 1),
+      cycleEnd:   new Date(today.getFullYear(), 11, 31),
+    }
+  }
+  if (bill.frequency === 'quarterly') {
+    const qStartMonth = Math.floor(today.getMonth() / 3) * 3
+    return {
+      cycleStart: new Date(today.getFullYear(), qStartMonth, 1),
+      cycleEnd:   new Date(today.getFullYear(), qStartMonth + 3, 0),
+    }
+  }
+  // monthly with no due_day
+  return {
+    cycleStart: new Date(today.getFullYear(), today.getMonth(), 1),
+    cycleEnd:   new Date(today.getFullYear(), today.getMonth() + 1, 0),
+  }
 }
 
 function isoDate(d: Date): string {
@@ -770,15 +830,21 @@ export async function deleteRecurring(id: string): Promise<void> {
 }
 
 // Insert payment row + update paid_by on the bill. No last_paid_at sync needed.
+// recurring.paid_by is the bill's owner/default payer — a command-and-aggregate
+// boundary: it's only ever mutated by the "edit bill" command (updateRecurring),
+// never by "record a payment" here. recurring_payments is the append-only log
+// of who actually paid each cycle, which is already the correct source of
+// truth for that (see getRecurringPaymentsForPeriod). This used to also
+// overwrite recurring.paid_by on every payment, so one household member
+// covering a single cycle would silently and permanently reassign who the
+// bill is "owned by" going forward.
 export async function markRecurringPaid(id: string, paidBy: string, paidAt?: string): Promise<void> {
   const { data: bill } = await supabase.from('recurring').select('amount').eq('id', id).single()
   const ts = paidAt ? new Date(paidAt + 'T12:00:00').toISOString() : new Date().toISOString()
-  const [{ error: payErr }, { error: billErr }] = await Promise.all([
-    supabase.from('recurring_payments').insert({ recurring_id: id, paid_by: paidBy, paid_at: ts, amount: bill?.amount ?? 0 }),
-    supabase.from('recurring').update({ paid_by: paidBy }).eq('id', id),
-  ])
-  if (payErr)  throw new Error(payErr.message)
-  if (billErr) throw new Error(billErr.message)
+  const { error } = await supabase
+    .from('recurring_payments')
+    .insert({ recurring_id: id, paid_by: paidBy, paid_at: ts, amount: bill?.amount ?? 0 })
+  if (error) throw new Error(error.message)
 }
 
 // Delete the current-cycle payment. Paid status recomputes on next getRecurring call.
@@ -823,16 +889,29 @@ export async function deleteRecurringPayment(paymentId: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
-export async function getRecurringPaymentHistory(recurringId: string): Promise<RecurringPayment[]> {
+// Offset + "Load more" — the right-weight pagination for a small, bounded,
+// per-bill list (payments for one recurring bill), same pattern already used
+// on the Receipts page. Fetches one extra row past the page size purely to
+// detect whether there's a next page, without a separate count query.
+const PAYMENT_HISTORY_PAGE_SIZE = 12
+
+export async function getRecurringPaymentHistory(
+  recurringId: string,
+  offset = 0,
+): Promise<{ data: RecurringPayment[]; hasMore: boolean }> {
   const { data, error } = await supabase
     .from('recurring_payments')
     .select('*')
     .eq('recurring_id', recurringId)
     .order('paid_at', { ascending: false })
-    .limit(12)
+    .range(offset, offset + PAYMENT_HISTORY_PAGE_SIZE)
   if (error) throw new Error(error.message)
-  return (data ?? []) as RecurringPayment[]
+  const rows = (data ?? []) as RecurringPayment[]
+  const hasMore = rows.length > PAYMENT_HISTORY_PAGE_SIZE
+  return { data: hasMore ? rows.slice(0, PAYMENT_HISTORY_PAGE_SIZE) : rows, hasMore }
 }
+
+export { PAYMENT_HISTORY_PAGE_SIZE }
 
 
 export async function getRecurringPaymentsForPeriod(

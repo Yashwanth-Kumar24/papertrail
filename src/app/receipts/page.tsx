@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import {
   getReceipts, getReceiptMeta, getStats,
@@ -63,26 +63,58 @@ export default function ReceiptsPage() {
   const [categoryFilter, setCategoryFilter] = useState('')
   const [selectingAll,   setSelectingAll]   = useState(false)
 
+  // Race guard: rapid filter/sort changes (or a stale "Load more" click that
+  // resolves after a filter change) can otherwise let an older response land
+  // after a newer one and overwrite fresh state with stale data. Combines two
+  // layers per standard practice — AbortController cancels the actual network
+  // request (saves backend work once this runs against a large receipt
+  // history), and a generation counter is the authoritative guard for
+  // anything that resolves anyway (e.g. an abort landing just after the
+  // response already started processing).
+  const abortRef = useRef<AbortController | null>(null)
+  const genRef    = useRef(0)
+
   const loadPage = useCallback(async (
     sn: string, df: string, dt: string, pb: string,
     off: number, append: boolean,
     sort: ReceiptSort = 'date_desc', src?: string, cat?: string,
   ) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    const myGen = ++genRef.current
+
     if (!append) setLoading(true); else setLoadingMore(true)
     try {
-      const [{ data, totalCount: tc }, s, m] = await Promise.all([
-        getReceipts(sn || undefined, df || undefined, dt || undefined, pb || undefined, off, sort, src, cat),
-        off === 0 ? getStats(sn || undefined, df || undefined, dt || undefined, pb || undefined, src, cat) : Promise.resolve(null),
-        off === 0 ? getReceiptMeta() : Promise.resolve(null),
+      const [{ data, totalCount: tc }, s] = await Promise.all([
+        getReceipts(sn || undefined, df || undefined, dt || undefined, pb || undefined, off, sort, src, cat, controller.signal),
+        off === 0 ? getStats(sn || undefined, df || undefined, dt || undefined, pb || undefined, src, cat, controller.signal) : Promise.resolve(null),
       ])
+      if (genRef.current !== myGen) return // superseded by a newer request — discard
       setReceipts(prev => append ? [...prev, ...data] : data)
       setTotalCount(tc)
       setOffset(off)
       if (s) setStats(s)
-      if (m) setAllMeta(m)
+    } catch (e: any) {
+      if (e?.name === 'AbortError' || genRef.current !== myGen) return // cancelled or superseded — not a real error
+      throw e
     } finally {
-      if (!append) setLoading(false); else setLoadingMore(false)
+      // Only the most recent request gets to clear the loading flags — an
+      // older, superseded request finishing late must not hide a spinner
+      // for work the newer request may still be doing.
+      if (genRef.current === myGen) {
+        if (!append) setLoading(false); else setLoadingMore(false)
+      }
     }
+  }, [])
+
+  // Facet source for the coordinated dropdowns — fetched once per mount, not
+  // on every filter/sort change. It only needs to change when the underlying
+  // receipt set changes (add/delete), which the mutation handlers refresh
+  // explicitly below. Re-fetching the whole table on every filter click was
+  // the main cost driver on this page once receipt count gets large.
+  useEffect(() => {
+    getReceiptMeta().then(setAllMeta)
   }, [])
 
   useEffect(() => {
@@ -164,7 +196,16 @@ export default function ReceiptsPage() {
         getStats(storeName||undefined, dateFrom||undefined, dateTo||undefined, paidBy||undefined, sourceFilter||undefined, categoryFilter||undefined),
       ])
       setAllMeta(m); setStats(s)
-    } catch { alert('Batch delete failed.') }
+    } catch {
+      // deleteReceipts() runs in chunks — a failure partway through can leave
+      // some of the selection genuinely deleted in the DB while local state
+      // was never updated to reflect it (the setReceipts/setTotalCount above
+      // never ran). An alert alone would leave the UI stale; reload page 1
+      // from the server so what's shown matches DB truth again.
+      alert('Batch delete failed partway through — reloading to show what was actually deleted.')
+      setSelected(new Set())
+      loadPage(storeName, dateFrom, dateTo, paidBy, 0, false, sortBy, sourceFilter || undefined, categoryFilter || undefined)
+    }
     finally { setBatchDeleting(false) }
   }
 

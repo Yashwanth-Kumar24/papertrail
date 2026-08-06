@@ -60,6 +60,12 @@ create table receipts (
   image_urls      text[],                       -- Supabase Storage public URLs (optional)
   raw_ocr_text    text,                         -- full OCR output, kept for debugging
 
+  -- Client-generated idempotency key (one per scan/import review session).
+  -- A retry of the same save attempt (double-click, retry after a timeout)
+  -- is a no-op replay via this, not a race against the duplicate-detection
+  -- heuristic below. See saveReceipt() in lib/queries.ts.
+  client_token    text,
+
   created_at      timestamptz   default now()
 );
 
@@ -140,8 +146,20 @@ create table recurring (
   -- Same values as receipts.category
   notes        text,
   active       boolean       not null default true,
-  created_at   timestamptz   default now()
+  created_at   timestamptz   default now(),
   -- last_paid_at removed: paid status is computed from recurring_payments at read time
+
+  -- Enforced at both the app layer (BillForm validation) and here — without
+  -- the right due info, getCycleWindow() can't compute an exact paid-cycle
+  -- window for the bill's stated frequency. Defense in depth: this catches
+  -- any future write path (a script, a different client) that skips the
+  -- app-level check, not just the UI form.
+  constraint recurring_due_info_required check (
+    (frequency = 'monthly'   and due_day  is not null) or
+    (frequency = 'annual'    and due_date is not null) or
+    (frequency = 'quarterly' and due_date is not null) or
+    (frequency = 'weekly')
+  )
 );
 
 
@@ -202,6 +220,229 @@ create view item_purchase_history as
   -- Excludes: returned items (final_price < 0), coupon reversals on return receipts
 
 
+-- ── RPC functions (server-side aggregation + atomic writes) ─
+-- Added to fix: (1) replaceReceiptItems delete+insert not being atomic,
+-- (2) return-candidate detection drifting between the UI and the weekly
+-- cron, (3) filter stats / spending analytics / item search shipping full
+-- tables or unbounded row sets to the browser instead of aggregating in
+-- Postgres. CREATE OR REPLACE is idempotent — safe to re-run.
+
+-- Atomically replace all line items on a receipt. Runs inside one implicit
+-- transaction — if the insert half fails, the delete never takes effect
+-- either, so a receipt can never end up stranded with zero items.
+create or replace function replace_receipt_items(p_receipt_id uuid, p_items jsonb)
+returns void
+language plpgsql
+as $$
+begin
+  delete from receipt_items where receipt_id = p_receipt_id;
+
+  insert into receipt_items
+    (receipt_id, item_code, name, original_price, discount_amount, final_price, quantity, sort_order)
+  select
+    p_receipt_id,
+    nullif(item->>'item_code', ''),
+    item->>'name',
+    coalesce((item->>'original_price')::numeric, 0),
+    coalesce((item->>'discount_amount')::numeric, 0),
+    coalesce((item->>'final_price')::numeric, 0),
+    coalesce((item->>'quantity')::int, 1),
+    (ord - 1)::int
+  from jsonb_array_elements(p_items) with ordinality as t(item, ord);
+end;
+$$;
+
+
+-- Return candidates — items where a past purchase price is higher than the
+-- most recent purchase (return / price-match opportunity). Only considers
+-- items with an item_code and a positive final_price (excludes $0 promo/free
+-- items from skewing the "was it ever more expensive" comparison), matching
+-- how getReturnCandidates() in queries.ts consumes the result. Used by BOTH
+-- the Prices page and the weekly price-alert cron, so there is exactly one
+-- implementation of "what counts as a candidate" — a separate, row-capped
+-- copy of this logic used to live in the cron route and could silently
+-- disagree with the UI.
+--
+-- This is the actual live definition (confirmed via
+-- `select prosrc from pg_proc where proname = 'get_return_candidates'`) —
+-- already deployed, nothing to run for this one.
+create or replace function get_return_candidates()
+returns table(item_code text)
+language sql
+stable
+as $$
+  select item_code
+  from item_purchase_history
+  where item_code is not null and final_price > 0
+  group by item_code
+  having count(*) > 1
+     and max(final_price) > (array_agg(final_price order by purchase_date desc))[1];
+$$;
+
+
+-- Filter-aware receipt stats (Receipts page stat cards). Replaces a
+-- fetch-all-matching-ids-then-.in()-again round trip that risked hitting
+-- PostgREST/URL length limits once the filtered set ran into the thousands.
+create or replace function get_receipt_stats(
+  p_store     text default null,
+  p_date_from date default null,
+  p_date_to   date default null,
+  p_paid_by   text default null,
+  p_source    text default null,
+  p_category  text default null
+)
+returns table(receipts bigint, total numeric, items bigint, savings numeric)
+language sql
+stable
+as $$
+  with matched as (
+    select r.id, r.total
+    from receipts r
+    where (p_store     is null or r.store_name  = p_store)
+      and (p_date_from is null or r.purchase_date >= p_date_from)
+      and (p_date_to   is null or r.purchase_date <= p_date_to)
+      and (p_paid_by   is null or r.paid_by      = p_paid_by)
+      and (p_source    is null or r.source       = p_source)
+      and (p_category  is null or r.category     = p_category)
+  )
+  select
+    (select count(*) from matched)::bigint,
+    coalesce((select sum(total) from matched), 0),
+    (select count(*) from receipt_items ri join matched m on m.id = ri.receipt_id)::bigint,
+    coalesce((select sum(ri.discount_amount) from receipt_items ri join matched m on m.id = ri.receipt_id), 0);
+$$;
+
+
+-- Finance page aggregates (Summary + Analytics tabs), computed entirely in
+-- Postgres instead of pulling every receipt (+ every item, for the discount
+-- sum) to the browser and reduce()-ing there. "All time" and the YoY toggle
+-- used to mean an unbounded full-table fetch on every render.
+create or replace function get_spending_stats(
+  p_date_from date default null,
+  p_date_to   date default null
+)
+returns jsonb
+language sql
+stable
+as $$
+  with filtered as (
+    select *
+    from receipts r
+    where (p_date_from is null or r.purchase_date >= p_date_from)
+      and (p_date_to   is null or r.purchase_date <= p_date_to)
+  ),
+  brand_agg as (
+    -- pos_cnt (receipts with total > 0) mirrors the original client-side
+    -- storeTrend()'s own receipt count, used only for its "3+ receipts"
+    -- confidence gate — cnt (all receipts, incl. refunds) is the one shown
+    -- in "Top stores" and used for the net total, same as before.
+    select lower(trim(store_name)) as key, min(brand) as brand, min(store_name) as name,
+           count(*) as cnt, count(*) filter (where total > 0) as pos_cnt, sum(total) as tot
+    from filtered
+    group by lower(trim(store_name))
+  ),
+  month_agg as (
+    select to_char(purchase_date, 'YYYY-MM') as month, sum(total) as tot
+    from filtered
+    group by 1
+  ),
+  payer_agg as (
+    select paid_by, count(*) as cnt, sum(total) as tot
+    from filtered
+    where paid_by is not null
+    group by paid_by
+  ),
+  category_agg as (
+    select coalesce(category, 'other') as category, count(*) as cnt, sum(total) as tot
+    from filtered
+    where total > 0
+    group by 1
+  ),
+  store_month_agg as (
+    select lower(trim(store_name)) as key, to_char(purchase_date, 'YYYY-MM') as month, sum(total) as tot
+    from filtered
+    where total > 0
+    group by 1, 2
+  ),
+  store_month_json as (
+    select key, jsonb_object_agg(month, tot order by month) as months
+    from store_month_agg
+    group by key
+  )
+  select jsonb_build_object(
+    'totalSpent',   coalesce((select sum(total) from filtered), 0),
+    'receiptCount', (select count(*) from filtered),
+    'totalSaved',   coalesce((select sum(ri.discount_amount) from receipt_items ri join filtered f on f.id = ri.receipt_id), 0),
+    'byBrand',      coalesce((select jsonb_agg(jsonb_build_object('brand', brand, 'name', name, 'count', cnt, 'positiveCount', pos_cnt, 'total', tot) order by tot desc) from brand_agg), '[]'::jsonb),
+    'byMonth',      coalesce((select jsonb_agg(jsonb_build_object('month', month, 'total', tot) order by month) from month_agg), '[]'::jsonb),
+    'byPayer',      coalesce((select jsonb_agg(jsonb_build_object('payer', paid_by, 'count', cnt, 'total', tot) order by tot desc) from payer_agg), '[]'::jsonb),
+    'byCategory',   coalesce((select jsonb_agg(jsonb_build_object('category', category, 'count', cnt, 'total', tot) order by tot desc) from category_agg), '[]'::jsonb),
+    -- Keyed by the SAME representative display name as byBrand.name (both derived
+    -- from the same lower(trim(store_name)) grouping) so the client can look up
+    -- stats.byStoreMonth[b.name] directly with no casing mismatch.
+    'byStoreMonth', coalesce((
+      select jsonb_object_agg(ba.name, smj.months)
+      from store_month_json smj
+      join brand_agg ba on ba.key = smj.key
+    ), '{}'::jsonb)
+  );
+$$;
+
+
+-- Item search (Prices page). Step 1 finds the bounded set of distinct items
+-- matching the query/filters (capped at 50 distinct ITEMS, not purchase
+-- rows); step 2 returns ALL purchase history for exactly those items, with
+-- no cap — even a frequently-bought item is naturally a few hundred rows at
+-- most. Replaces a flat `.limit(300)` applied before grouping, which could
+-- silently truncate an item's older purchases once a household's history
+-- got large enough for a broad search term to exceed 300 rows.
+create or replace function search_item_history(
+  p_query     text,
+  p_brand     text    default null,
+  p_date_from date    default null,
+  p_date_to   date    default null,
+  p_price_max numeric default null
+)
+returns setof item_purchase_history
+language plpgsql
+stable
+as $$
+declare
+  is_code   boolean := p_query ~ '^[0-9]+$';
+  is_price  boolean := p_query ~ '^\$?[0-9]*\.[0-9]+$';
+  price_val numeric;
+begin
+  if is_price then
+    price_val := replace(p_query, '$', '')::numeric;
+  end if;
+
+  return query
+  with matched_groups as (
+    select distinct h.item_code, h.store_name, h.name
+    from item_purchase_history h
+    where
+      case
+        when is_code and not is_price then h.item_code = p_query
+        when is_price                 then h.final_price between price_val - 1 and price_val + 1
+        else                                h.name ilike '%' || p_query || '%'
+      end
+      and (p_brand     is null or p_brand = 'all' or h.brand = p_brand)
+      and (p_date_from is null or h.purchase_date >= p_date_from)
+      and (p_date_to   is null or h.purchase_date <= p_date_to)
+      and (p_price_max is null or h.final_price <= p_price_max)
+    order by h.name
+    limit 50
+  )
+  select h.*
+  from item_purchase_history h
+  join matched_groups g
+    on (g.item_code is not null and h.item_code = g.item_code)
+    or (g.item_code is null and h.item_code is null and h.store_name = g.store_name and h.name = g.name)
+  order by h.purchase_date desc;
+end;
+$$;
+
+
 -- ── Row Level Security ─────────────────────────────────────
 -- Disabled — this is a single-household personal app with no auth.
 -- Re-enable and add policies when multi-user auth is added (v2.0).
@@ -226,6 +467,13 @@ create unique index receipts_unique_txn
 create unique index receipts_unique_notxn
   on receipts (store_name, purchase_date, coalesce(purchase_time::text, ''), total)
   where transaction_id is null;
+
+-- Idempotency key: a retry of the same save attempt (double-click, retry
+-- after a timeout) is a no-op replay via client_token, not a race against
+-- the two duplicate-prevention indexes above. See saveReceipt() in queries.ts.
+create unique index receipts_unique_client_token
+  on receipts (client_token)
+  where client_token is not null;
 
 
 -- ============================================================
