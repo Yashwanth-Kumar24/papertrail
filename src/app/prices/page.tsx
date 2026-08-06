@@ -1,9 +1,9 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getClaimedAlerts, discardClaim } from '@/lib/queries'
+import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getClaimedAlerts, discardClaim, getPriceAlertExclusions, addPriceAlertExclusion, removePriceAlertExclusion } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { ItemHistory, ReturnedItem, ClaimedAlert } from '@/lib/types'
+import type { ItemHistory, ReturnedItem, ClaimedAlert, PriceAlertExclusion } from '@/lib/types'
 import { BRAND_LABELS } from '@/lib/types'
 
 const PRICES_BRAND_KEY = 'prices_brand_filter'
@@ -250,6 +250,97 @@ function ClaimedRow({ claim, onDiscarded }: { claim: ClaimedAlert; onDiscarded: 
   )
 }
 
+function ExclusionRow({ exclusion, onRemoved }: { exclusion: PriceAlertExclusion; onRemoved: () => void }) {
+  const [busy, setBusy] = useState(false)
+
+  async function remove() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await removePriceAlertExclusion(exclusion.id)
+      onRemoved()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        {exclusion.item_code
+          ? <span className="code-badge">{exclusion.item_code}</span>
+          : <span style={{fontStyle:'italic'}}>{exclusion.item_name}</span>}
+      </td>
+      <td style={{fontSize:11,color:'var(--ink3)'}}>{exclusion.item_code ? 'by code' : 'by name'}</td>
+      <td>
+        <button
+          onClick={remove}
+          disabled={busy}
+          style={{fontSize:11,fontWeight:600,padding:'3px 9px',borderRadius:999,border:'1px solid var(--border2)',background:'none',color:'var(--ink3)',cursor: busy ? 'default' : 'pointer'}}
+        >
+          {busy ? '…' : '✕ Remove'}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
+// Add form for the Excluded tab — user picks Code or Name, types the exact
+// value, submits. No per-alert-row button; this is the only way to add one.
+function ExclusionForm({ onAdded }: { onAdded: () => void }) {
+  const [matchBy, setMatchBy] = useState<'code' | 'name'>('code')
+  const [value,   setValue]   = useState('')
+  const [busy,    setBusy]    = useState(false)
+  const [err,     setErr]     = useState('')
+
+  async function submit() {
+    const v = value.trim()
+    if (!v || busy) return
+    setBusy(true); setErr('')
+    try {
+      await addPriceAlertExclusion(matchBy === 'code' ? v : undefined, matchBy === 'name' ? v : undefined)
+      setValue('')
+      onAdded()
+    } catch (e: any) {
+      setErr(e.message ?? 'Failed to add exclusion.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{marginBottom:16}}>
+      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+        <div style={{display:'flex',gap:4}}>
+          <button
+            onClick={() => setMatchBy('code')}
+            style={{fontSize:12,fontWeight:600,padding:'5px 10px',borderRadius:999,cursor:'pointer',border:`1px solid ${matchBy==='code' ? 'var(--ink2)' : 'var(--border2)'}`,background: matchBy==='code' ? 'var(--ink2)' : 'transparent',color: matchBy==='code' ? '#fff' : 'var(--ink2)'}}
+          >Code</button>
+          <button
+            onClick={() => setMatchBy('name')}
+            style={{fontSize:12,fontWeight:600,padding:'5px 10px',borderRadius:999,cursor:'pointer',border:`1px solid ${matchBy==='name' ? 'var(--ink2)' : 'var(--border2)'}`,background: matchBy==='name' ? 'var(--ink2)' : 'transparent',color: matchBy==='name' ? '#fff' : 'var(--ink2)'}}
+          >Name</button>
+        </div>
+        <input
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') submit() }}
+          placeholder={matchBy === 'code' ? 'Item code, e.g. 1844406' : 'Item name, e.g. GOLD BULLION'}
+          style={{flex:1,minWidth:180,fontSize:13,padding:'7px 10px',border:'1px solid var(--border)',borderRadius:8,fontFamily:'var(--sans)'}}
+        />
+        <button
+          onClick={submit}
+          disabled={busy || !value.trim()}
+          style={{fontSize:13,fontWeight:600,padding:'7px 14px',borderRadius:8,border:'none',background:'var(--green)',color:'#fff',cursor: busy ? 'default' : 'pointer',opacity: !value.trim() ? 0.5 : 1}}
+        >
+          {busy ? 'Adding…' : '+ Add'}
+        </button>
+      </div>
+      {err && <div style={{marginTop:8,fontSize:12,color:'var(--red-tx)'}}>{err}</div>}
+    </div>
+  )
+}
+
 function RefundRow({ item }: { item: ReturnedItem }) {
   return (
     <tr>
@@ -283,9 +374,10 @@ function ItemsPageContent() {
   const [searched, setSearched] = useState(false)
   const [returns,      setReturns]      = useState<ItemHistory[]>([])
   const [claimed,      setClaimed]      = useState<ClaimedAlert[]>([])
+  const [exclusions,   setExclusions]   = useState<PriceAlertExclusion[]>([])
   const [retLoading,   setRetLoading]   = useState(false)
   const [retFilter,    setRetFilter]    = useState('')
-  const [retTab,        setRetTab]      = useState<'all' | 'pricematch' | 'claimed'>('all')
+  const [retTab,        setRetTab]      = useState<'all' | 'pricematch' | 'claimed' | 'excluded'>('all')
   const retFetchedAt = useRef<number>(0)
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -342,17 +434,18 @@ function ItemsPageContent() {
   }, [searchParams, run])
 
   // Shared by the mount-restore effect, enterReturns(), and the post-claim /
-  // post-discard refresh — one place that fetches both the candidate list
-  // and the claim log together, so they never go out of sync (a claim/
-  // discard changes both at once: one item leaves `returns`, one appears
-  // in or vanishes from `claimed`).
+  // post-discard / post-exclusion refresh — one place that fetches the
+  // candidate list, claim log, and exclusion list together, so they never
+  // go out of sync (e.g. adding an exclusion changes both `returns` and
+  // `exclusions` at once).
   const loadPriceAlerts = useCallback(() => {
     setRetLoading(true)
     Promise.all([
       getReturnCandidates(),
       getClaimedAlerts(),
-    ]).then(([r, c]) => {
-      setReturns(r); setClaimed(c); retFetchedAt.current = Date.now()
+      getPriceAlertExclusions(),
+    ]).then(([r, c, x]) => {
+      setReturns(r); setClaimed(c); setExclusions(x); retFetchedAt.current = Date.now()
     }).finally(() => setRetLoading(false))
   }, [])
 
@@ -525,11 +618,12 @@ function ItemsPageContent() {
             <button onClick={() => setRetTab('all')} style={tabBtn(retTab==='all', 'var(--ink2)')}>All ({returns.length})</button>
             <button onClick={() => setRetTab('pricematch')} style={tabBtn(retTab==='pricematch', 'var(--green)')}>↺ Price match ({priceMatchCount})</button>
             <button onClick={() => setRetTab('claimed')} style={tabBtn(retTab==='claimed', '#1D4ED8')}>✓ Claimed ({claimed.length})</button>
+            <button onClick={() => setRetTab('excluded')} style={tabBtn(retTab==='excluded', 'var(--ink3)')}>🚫 Excluded ({exclusions.length})</button>
           </div>
 
           {retLoading && <div className="empty"><p style={{color:'var(--ink3)'}}>Scanning price history…</p></div>}
 
-          {!retLoading && retTab !== 'claimed' && returns.length === 0 && (
+          {!retLoading && (retTab === 'all' || retTab === 'pricematch') && returns.length === 0 && (
             <div className="empty">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
@@ -539,7 +633,7 @@ function ItemsPageContent() {
             </div>
           )}
 
-          {!retLoading && retTab !== 'claimed' && returns.length > 0 && (() => {
+          {!retLoading && (retTab === 'all' || retTab === 'pricematch') && returns.length > 0 && (() => {
             const scoped  = retTab === 'pricematch' ? returns.filter(i => daysSince(i.max_price_purchase!.purchase_date) <= 30) : returns
             const visible = retFilter
               ? scoped.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase()))
@@ -622,6 +716,36 @@ function ItemsPageContent() {
                     </table>
                   </div>
                 </>
+              )}
+            </>
+          )}
+
+          {!retLoading && retTab === 'excluded' && (
+            <>
+              <div style={{padding:'10px 14px',background:'var(--cream2)',borderRadius:'var(--r)',fontSize:13,color:'var(--ink2)',marginBottom:12}}>
+                Items here never show up as a Price Alert — useful for things like gold bullion or gift cards that swing in value but were never a &ldquo;you got overcharged&rdquo; signal. Gas is already excluded automatically. Add an item&rsquo;s code (from the badge shown on its row elsewhere in Prices) or its exact name below.
+              </div>
+              <ExclusionForm onAdded={loadPriceAlerts}/>
+              {exclusions.length === 0 ? (
+                <div className="empty">
+                  <p style={{fontWeight:500}}>Nothing excluded</p>
+                  <p style={{fontSize:13}}>Add an item code or name above to keep it out of Price Alerts</p>
+                </div>
+              ) : (
+                <div className="tbl-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Matched by</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exclusions.map(x => <ExclusionRow key={x.id} exclusion={x} onRemoved={loadPriceAlerts}/>)}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
           )}

@@ -205,6 +205,30 @@ create table price_alert_claims (
 );
 
 
+-- ── price_alert_exclusions ──────────────────────────────────
+-- Items that should never surface as a Price Alert at all — e.g. gold
+-- bullion or gas, whose price swings with the market and were never a
+-- "you got overcharged" signal in the first place. Added/removed only from
+-- the Excluded tab (no per-alert-row button); once added, get_return_
+-- candidates() below filters it out on the very next call, so nothing else
+-- needs to stay in sync. Exactly one of item_code/item_name is set — code
+-- is the reliable match when available (exact, low OCR-error), name is the
+-- fallback for codeless items. NOTE: get_return_candidates() currently
+-- requires item_code is not null to ever produce a candidate, so a
+-- name-only exclusion has nothing to match against yet — it's stored for
+-- symmetry with price_alert_claims and to be ready if candidate detection
+-- is ever extended to codeless items.
+create table price_alert_exclusions (
+  id         uuid        primary key default gen_random_uuid(),
+  item_code  text,
+  item_name  text,
+  created_at timestamptz not null default now(),
+  check (item_code is not null or item_name is not null)
+);
+create unique index on price_alert_exclusions(item_code) where item_code is not null;
+create unique index on price_alert_exclusions(lower(item_name)) where item_code is null;
+
+
 -- ── Indexes ────────────────────────────────────────────────
 create index on receipts(brand);
 create index on receipts(purchase_date desc);
@@ -320,9 +344,10 @@ $$;
 -- copy of this logic used to live in the cron route and could silently
 -- disagree with the UI.
 --
--- This is the actual live definition (confirmed via
--- `select prosrc from pg_proc where proname = 'get_return_candidates'`) —
--- already deployed, nothing to run for this one.
+-- Layers one exclusion on top: item_code in price_alert_exclusions —
+-- user-managed via the Excluded tab (gas, gold bullion, or anything else
+-- whose price swings are never a real "you got overcharged" signal — add
+-- it there by code or name, same mechanism either way).
 create or replace function get_return_candidates()
 returns table(item_code text)
 language sql
@@ -331,6 +356,7 @@ as $$
   select item_code
   from item_purchase_history
   where item_code is not null and final_price > 0
+    and item_code not in (select item_code from price_alert_exclusions where item_code is not null)
   group by item_code
   having count(*) > 1
      and max(final_price) > (array_agg(final_price order by purchase_date desc))[1];
@@ -601,7 +627,8 @@ alter table push_subscriptions disable row level security;
 alter table budgets            disable row level security;
 alter table recurring          disable row level security;
 alter table recurring_payments disable row level security;
-alter table price_alert_claims disable row level security;
+alter table price_alert_claims     disable row level security;
+alter table price_alert_exclusions disable row level security;
 
 
 -- ── Duplicate prevention indexes ──────────────────────────

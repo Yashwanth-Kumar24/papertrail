@@ -731,6 +731,39 @@ export async function discardClaim(claimId: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// ── Price alert exclusions (Excluded tab) ───────────────────
+// Items that should never surface as a Price Alert — see
+// price_alert_exclusions in schema.sql. Filtering happens inside
+// get_return_candidates() itself, so adding/removing one takes effect on
+// the very next getReturnCandidates() call with no other bookkeeping.
+export async function getPriceAlertExclusions(): Promise<import('./types').PriceAlertExclusion[]> {
+  const { data, error } = await supabase
+    .from('price_alert_exclusions')
+    .select('id, item_code, item_name, created_at')
+    .order('created_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  return (data ?? []).map((e: any) => ({
+    id:         e.id,
+    item_code:  e.item_code ?? undefined,
+    item_name:  e.item_name ?? undefined,
+    created_at: e.created_at,
+  }))
+}
+
+// Exactly one of itemCode/itemName should be passed — matches how the
+// Excluded tab's add form works (a Code/Name toggle, one value).
+export async function addPriceAlertExclusion(itemCode?: string, itemName?: string): Promise<void> {
+  const { error } = await supabase
+    .from('price_alert_exclusions')
+    .insert({ item_code: itemCode ?? null, item_name: itemName ?? null })
+  if (error) throw new Error(error.message)
+}
+
+export async function removePriceAlertExclusion(id: string): Promise<void> {
+  const { error } = await supabase.from('price_alert_exclusions').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
 // ── Receipts by date (for heatmap day detail) ──────────────
 export async function getReceiptsByDate(date: string): Promise<Receipt[]> {
   const { data, error } = await supabase

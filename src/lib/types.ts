@@ -173,6 +173,16 @@ export interface ClaimedAlert extends PriceAlertClaim {
   brand: string
 }
 
+// An item permanently kept out of Price Alerts (e.g. gold bullion, gas) —
+// see price_alert_exclusions in schema.sql. Exactly one of item_code/
+// item_name is set.
+export interface PriceAlertExclusion {
+  id: string
+  item_code?: string
+  item_name?: string
+  created_at: string
+}
+
 // A single returned line item — from item_returns (the complement of
 // item_purchase_history), used by the Prices → Returns search tab.
 export interface ReturnedItem {
