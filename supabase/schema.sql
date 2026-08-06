@@ -325,7 +325,7 @@ create or replace function get_receipt_stats(
   p_category      text default null,
   p_return_filter text default null
 )
-returns table(receipts bigint, total numeric, items bigint, savings numeric)
+returns table(receipts bigint, total numeric, items bigint, savings numeric, refunded numeric)
 language sql
 stable
 as $$
@@ -346,7 +346,11 @@ as $$
     (select count(*) from matched)::bigint,
     coalesce((select sum(total) from matched), 0),
     (select count(*) from receipt_items ri join matched m on m.id = ri.receipt_id)::bigint,
-    coalesce((select sum(ri.discount_amount) from receipt_items ri join matched m on m.id = ri.receipt_id), 0);
+    coalesce((select sum(ri.discount_amount) from receipt_items ri join matched m on m.id = ri.receipt_id), 0),
+    -- Sum of just the return receipts within the matched set — same shape as
+    -- get_spending_stats.totalRefunded. Shown as its own line under Total
+    -- spent on the Receipts page, since `total` above already nets it in.
+    coalesce((select -sum(total) from matched where total < 0), 0);
 $$;
 
 

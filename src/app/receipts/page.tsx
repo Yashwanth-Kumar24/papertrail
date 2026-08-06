@@ -74,7 +74,7 @@ function ReceiptsPageContent() {
   const [offset,        setOffset]        = useState(0)
   const [loadingMore,   setLoadingMore]   = useState(false)
   const [allMeta,       setAllMeta]       = useState<{ store_name: string; purchase_date: string; paid_by: string | null; source: string; category: string; total: number }[]>([])
-  const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0 })
+  const [stats,         setStats]         = useState({ receipts:0, total:0, items:0, savings:0, refunded:0 })
   const [storeName,     setStoreName]     = useState(() => searchParams.get('store') ?? '')
   const [dateFrom,      setDateFrom]      = useState(() => searchParams.get('from') ?? '')
   const [dateTo,        setDateTo]        = useState(() => searchParams.get('to') ?? '')
@@ -300,6 +300,13 @@ function ReceiptsPageContent() {
           <div className="stat-val" style={{fontSize:18,color:stats.total<0?'var(--red-tx)':'inherit'}}>
             {stats.total < 0 ? `−${money(Math.abs(stats.total))}` : money(stats.total)}
           </div>
+          {/* Already netted into the total above (a return receipt's total is
+              stored negative) — shown again here just so it's visible without
+              having to do the subtraction yourself. Hidden in the Returns-only
+              view since the total there already IS the refunded amount. */}
+          {stats.refunded > 0 && returnFilter !== 'returns' && (
+            <div className="stat-sub" style={{color:'var(--red-tx)'}}>−{money(stats.refunded)} refunded</div>
+          )}
         </div>
         <div className="stat-card"><div className="stat-label">Line items</div><div className="stat-val">{stats.items}</div></div>
         <div className="stat-card"><div className="stat-label">Saved</div><div className="stat-val" style={{color:'var(--green)',fontSize:18}}>{money(stats.savings)}</div></div>

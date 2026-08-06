@@ -269,6 +269,7 @@ export async function getStats(storeName?: string, dateFrom?: string, dateTo?: s
     total:    Number(row?.total    ?? 0),
     items:    Number(row?.items    ?? 0),
     savings:  Number(row?.savings  ?? 0),
+    refunded: Number(row?.refunded ?? 0),
   }
 }
 
