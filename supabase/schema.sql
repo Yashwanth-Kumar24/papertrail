@@ -344,10 +344,11 @@ $$;
 -- copy of this logic used to live in the cron route and could silently
 -- disagree with the UI.
 --
--- Layers one exclusion on top: item_code in price_alert_exclusions —
--- user-managed via the Excluded tab (gas, gold bullion, or anything else
--- whose price swings are never a real "you got overcharged" signal — add
--- it there by code or name, same mechanism either way).
+-- Layers exclusions on top, from price_alert_exclusions (user-managed via
+-- the Excluded tab — gas, gold bullion, or anything else whose price swings
+-- are never a real "you got overcharged" signal). Checks BOTH item_code and
+-- name — a name-based exclusion has to match on `name` since a coded item
+-- still has a name and a name-only exclusion row has no code to match on.
 create or replace function get_return_candidates()
 returns table(item_code text)
 language sql
@@ -357,6 +358,7 @@ as $$
   from item_purchase_history
   where item_code is not null and final_price > 0
     and item_code not in (select item_code from price_alert_exclusions where item_code is not null)
+    and upper(trim(name)) not in (select upper(trim(item_name)) from price_alert_exclusions where item_name is not null)
   group by item_code
   having count(*) > 1
      and max(final_price) > (array_agg(final_price order by purchase_date desc))[1];
