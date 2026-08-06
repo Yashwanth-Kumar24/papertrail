@@ -126,6 +126,7 @@ export interface ItemHistory {
   item_code?: string
   name: string
   purchases: {
+    id: string             // receipt_items.id — the exact line item; used to claim it
     receipt_id: string
     purchase_date: string
     store_name: string
@@ -141,6 +142,7 @@ export interface ItemHistory {
   latest_price: number
   trend: 'up' | 'down' | 'stable' | 'single'
   max_price_purchase?: {
+    id: string
     receipt_id: string
     purchase_date: string
     store_name: string
@@ -149,12 +151,26 @@ export interface ItemHistory {
 }
 
 // A logged "I acted on this Price Alert" event — see price_alert_claims in
-// schema.sql. claim_type is a record of why (return vs price match); both
-// are treated identically for exclusion purposes.
+// schema.sql. Keyed by receipt_item_id (the exact line item), not item_code
+// (which can be null). claim_type is a record of why (return vs price
+// match); both are treated identically for exclusion purposes.
 export interface PriceAlertClaim {
-  item_code: string
+  id: string
+  receipt_item_id: string
   receipt_id: string
+  item_code?: string
+  item_name: string
   claim_type: 'return' | 'price_match'
+  claimed_by?: string
+  created_at: string
+}
+
+// PriceAlertClaim + the joined display fields, for the Claimed tab table.
+export interface ClaimedAlert extends PriceAlertClaim {
+  final_price: number
+  store_name: string
+  purchase_date: string
+  brand: string
 }
 
 // A single returned line item — from item_returns (the complement of

@@ -58,7 +58,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 - **Store filter** — dropdown shows only stores you actually have receipts for (populated dynamically from DB, not a hardcoded list); persists across sessions via localStorage
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity. Each row is one specific overpriced purchase (its date and price are shown under "You paid"), with two buttons that act only on that purchase: **↩ Return** (always available) and **↺ Match** (only within Costco's ~30-day price-adjustment window). Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human tap. Either button drops that one purchase off the list permanently; a different, still-unclaimed purchase of the same item can still surface as its own row later. A **filter pill** ("↺ Price-match eligible (≤30d)") narrows the list to just what's still inside the match window. A running count ("✓ N claimed") shows at the top of the tab
+- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity. Three sub-tabs: **All**, **↺ Price match** (purchases ≤30 days old — Costco's price-adjustment window), and **✓ Claimed**. The headline row per item is the highest-priced still-unclaimed purchase; expand it to see every remaining unclaimed purchase in that item's history, each with its own Receipt link and — if it's still elevated — **↩ Return** (always available) / **↺ Match** (only within the 30-day window) buttons. Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human tap on one specific line item. Claiming removes that purchase from All/Price match immediately (a different, still-unclaimed purchase of the same item can still surface as the new headline) and adds it to the **Claimed** tab, which shows a running count + total value and lets you **✕ Discard** a claim to undo it (the purchase reappears in All)
 - **↩ Refunds mode** — a separate search for items you've actually returned (not to be confused with Price alerts above, which is about *current* price drops). Search by name or item code; results show refund amount, date, store, and a link to the return receipt. Sourced from a dedicated dataset that never touches the main search's price-trend data
 - **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
@@ -285,10 +285,12 @@ recurring_payments:
   id, recurring_id, paid_by, paid_at, amount, created_at
 
 price_alert_claims:
-  id, item_code, receipt_id,
-  claim_type,       -- 'return' | 'price_match' — record of why, treated identically
+  id, receipt_item_id, receipt_id,
+  item_code, item_name,  -- item_code nullable (not every business prints one); item_name always set
+  claim_type,             -- 'return' | 'price_match' — record of why, treated identically
   claimed_by, created_at
-  -- unique (item_code, receipt_id) — one claim per specific overpriced purchase
+  -- unique (receipt_item_id) — one claim per specific line item; keyed off
+  -- receipt_items.id rather than item_code so codeless items never collide
 
 -- View used by item search and price alerts (excludes returned items):
 item_purchase_history (joins receipts + receipt_items where final_price >= 0)

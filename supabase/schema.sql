@@ -179,22 +179,29 @@ create table recurring_payments (
 -- A manual, human-entered log of "I acted on this Price Alert" — never
 -- inferred from scanned receipts (a return can happen for unrelated reasons
 -- like spoiled food, and a price match produces no receipt at all, so there
--- is nothing reliable to infer this from). One row = one specific overpriced
--- purchase instance (item_code + the receipt it was overpaid on) that's been
--- resolved. claim_type is a record of WHY (for the person's own reference)
+-- is nothing reliable to infer this from). One row = one specific line item
+-- (receipt_item_id) that's been resolved. Keyed by receipt_item_id rather
+-- than (item_code, receipt_id): item_code can be null (not every business
+-- prints one), and a single receipt can have multiple codeless line items —
+-- the composite key would collide between them, but receipt_items.id is
+-- always unique. item_code/item_name are still carried as denormalized
+-- columns so the Prices page can match/display claims without an extra
+-- join. claim_type is a record of WHY (for the person's own reference)
 -- only — both types are excluded from future return-candidate checks
--- identically; a different, still-unclaimed purchase of the same item_code
+-- identically; a different, still-unclaimed purchase of the same item
 -- remains free to surface as its own opportunity. No amount is captured: a
 -- return's refund and a price match's credit are both already on the
 -- receipt/statement, so there is nothing this table needs to total.
 create table price_alert_claims (
-  id             uuid          primary key default gen_random_uuid(),
-  item_code      text          not null,
-  receipt_id     uuid          not null references receipts(id) on delete cascade,
-  claim_type     text          not null check (claim_type in ('return', 'price_match')),
-  claimed_by     text,
-  created_at     timestamptz   not null default now(),
-  unique (item_code, receipt_id)
+  id              uuid          primary key default gen_random_uuid(),
+  receipt_item_id uuid          not null references receipt_items(id) on delete cascade,
+  receipt_id      uuid          not null references receipts(id) on delete cascade,
+  item_code       text,
+  item_name       text          not null,
+  claim_type      text          not null check (claim_type in ('return', 'price_match')),
+  claimed_by      text,
+  created_at      timestamptz   not null default now(),
+  unique (receipt_item_id)
 );
 
 
