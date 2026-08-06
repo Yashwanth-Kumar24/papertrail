@@ -7,6 +7,7 @@ import { parseReceipt, mergeReceipts } from '@/parsers/registry'
 import type { ParsedReceipt, ParsedItem } from '@/lib/types'
 import { PAYERS, PAYER_COLORS, CATEGORIES, CATEGORY_LABELS, suggestCategory } from '@/lib/types'
 import { saveReceipt, uploadReceiptImage, PossibleDuplicateError } from '@/lib/queries'
+import { getOwnPushEndpoint } from '@/lib/push'
 
 type Step = 'capture' | 'scanning' | 'review' | 'saving'
 
@@ -241,16 +242,18 @@ export default function ScanPage() {
           await supabase.from('receipts').update({ image_urls: urls }).eq('id', id)
         }
       }
-      // Fire push notification — don't await, never block navigation
-      fetch('/api/notify', {
+      // Fire push notification — don't await, never block navigation.
+      // excludeEndpoint skips notifying this same device (see lib/push.ts).
+      getOwnPushEndpoint().then(excludeEndpoint => fetch('/api/notify', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New receipt added',
           body:  `${editPaidBy} added ${final.store.name} · $${Number(final.total ?? 0).toFixed(2)}`,
           url:   `/receipts/${id}`,
+          excludeEndpoint,
         }),
-      }).catch(() => {})
+      })).catch(() => {})
 
       router.push(`/receipts/${id}`)
     } catch (e: any) {

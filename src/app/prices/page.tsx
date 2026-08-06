@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getPriceAlertClaimsSummary } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ItemHistory, ReturnedItem } from '@/lib/types'
-import { BRAND_LABELS, PAYERS, PAYER_COLORS } from '@/lib/types'
+import { BRAND_LABELS } from '@/lib/types'
 
 const PRICES_BRAND_KEY = 'prices_brand_filter'
 
@@ -70,12 +70,35 @@ function ItemRow({ item }: { item: ItemHistory }) {
   )
 }
 
-function ReturnRow({ item, onClaim }: { item: ItemHistory; onClaim: (item: ItemHistory) => void }) {
-  const [open, setOpen]   = useState(false)
-  const latest            = item.purchases[0]
-  const expensive         = item.max_price_purchase!
-  const savings           = item.max_price - item.latest_price
-  const daysSince         = Math.floor((Date.now() - new Date(expensive.purchase_date).getTime()) / 86400000)
+// daysSince <= 30 is Costco's ~30-day price-adjustment window — Return is
+// always offered; Price match only within that window (matches a purchase
+// beyond it can't actually be adjusted, so offering the button would lie).
+function daysSince(dateStr: string): number {
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86400000)
+}
+
+function ReturnRow({ item, onClaimed }: { item: ItemHistory; onClaimed: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState<'return' | 'price_match' | null>(null)
+  const latest         = item.purchases[0]
+  const expensive       = item.max_price_purchase!
+  const savings         = item.max_price - item.latest_price
+  const days            = daysSince(expensive.purchase_date)
+  const canPriceMatch   = days <= 30
+
+  // Claims this one specific purchase (item_code + expensive.receipt_id) —
+  // never the item as a whole. A different, still-unclaimed purchase of the
+  // same item can still surface as its own row later.
+  async function claim(type: 'return' | 'price_match') {
+    if (busy) return
+    setBusy(type)
+    try {
+      await claimPriceAlert(item.item_code!, expensive.receipt_id, type)
+      onClaimed()
+    } finally {
+      setBusy(null)
+    }
+  }
 
   return (
     <>
@@ -85,12 +108,12 @@ function ReturnRow({ item, onClaim }: { item: ItemHistory; onClaim: (item: ItemH
           <div style={{fontWeight:500}}>{item.name}</div>
           <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
         </td>
-        {/* What you paid (the return candidate) */}
+        {/* The one specific purchase the buttons on this row act on */}
         <td style={{fontFamily:'var(--mono)',fontSize:13}}>
           {money(expensive.final_price)}
           <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(expensive.purchase_date)}</div>
-          <div style={{fontSize:10,color: daysSince <= 90 ? 'var(--green)' : 'var(--ink3)'}}>
-            {daysSince}d ago
+          <div style={{fontSize:10,color: days <= 90 ? 'var(--green)' : 'var(--ink3)'}}>
+            {days}d ago
           </div>
         </td>
         {/* Current (cheaper) price */}
@@ -108,15 +131,28 @@ function ReturnRow({ item, onClaim }: { item: ItemHistory; onClaim: (item: ItemH
             Return receipt →
           </Link>
         </td>
-        {/* Claim — logs that this was acted on, so it stops showing (return)
-            or starts comparing at its corrected price (price match) */}
-        <td>
-          <button
-            onClick={e => { e.stopPropagation(); onClaim(item) }}
-            style={{fontSize:11,fontWeight:600,padding:'4px 10px',borderRadius:999,border:'1px solid var(--green)',background:'none',color:'var(--green)',cursor:'pointer',whiteSpace:'nowrap'}}
-          >
-            ✓ Claim
-          </button>
+        {/* Claim this purchase — Return always available, Price match only
+            inside the 30-day window. Either way only THIS purchase drops
+            off; a different purchase of the same item can resurface later. */}
+        <td onClick={e => e.stopPropagation()}>
+          <div style={{display:'flex',gap:6,whiteSpace:'nowrap'}}>
+            <button
+              onClick={() => claim('return')}
+              disabled={busy !== null}
+              style={{fontSize:11,fontWeight:600,padding:'4px 9px',borderRadius:999,border:'1px solid var(--red-tx)',background:'none',color:'var(--red-tx)',cursor: busy ? 'default' : 'pointer',opacity: busy && busy !== 'return' ? 0.4 : 1}}
+            >
+              {busy === 'return' ? '…' : '↩ Return'}
+            </button>
+            {canPriceMatch && (
+              <button
+                onClick={() => claim('price_match')}
+                disabled={busy !== null}
+                style={{fontSize:11,fontWeight:600,padding:'4px 9px',borderRadius:999,border:'1px solid var(--green)',background:'none',color:'var(--green)',cursor: busy ? 'default' : 'pointer',opacity: busy && busy !== 'price_match' ? 0.4 : 1}}
+              >
+                {busy === 'price_match' ? '…' : '↺ Match'}
+              </button>
+            )}
+          </div>
         </td>
       </tr>
       {open && item.purchases.map((p, i) => (
@@ -136,114 +172,6 @@ function ReturnRow({ item, onClaim }: { item: ItemHistory; onClaim: (item: ItemH
         </tr>
       ))}
     </>
-  )
-}
-
-// ── Claim modal ─────────────────────────────────────────────
-// Logs that a Price Alert row was acted on. Price match is only offered
-// within Costco's ~30-day price-adjustment window; past that, only Return
-// is available. Amount defaults to the alert's own savings figure but is
-// editable — it represents money recovered either way (see claimPriceAlert
-// docs in lib/queries.ts for why that framing was chosen over storing the
-// new price directly).
-function ClaimModal({ item, onClose, onClaimed }: {
-  item: ItemHistory
-  onClose: () => void
-  onClaimed: () => void
-}) {
-  const expensive = item.max_price_purchase!
-  const savings   = item.max_price - item.latest_price
-  const daysSince = Math.floor((Date.now() - new Date(expensive.purchase_date).getTime()) / 86400000)
-  const canPriceMatch = daysSince <= 30
-
-  const [claimType, setClaimType] = useState<'return' | 'price_match'>(canPriceMatch ? 'price_match' : 'return')
-  const [amount,    setAmount]    = useState(savings.toFixed(2))
-  const [payer,     setPayer]     = useState(PAYERS[0] ?? '')
-  const [saving,    setSaving]    = useState(false)
-  const [err,       setErr]       = useState('')
-
-  async function confirm() {
-    if (!payer) { setErr('Select who claimed it.'); return }
-    setSaving(true); setErr('')
-    try {
-      await claimPriceAlert(item.item_code!, expensive.receipt_id, claimType, parseFloat(amount) || 0, payer)
-      onClaimed()
-    } catch (e: any) {
-      setErr(e.message ?? 'Failed to save claim.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.4)',zIndex:999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}} onClick={onClose}>
-      <div style={{background:'#fff',borderRadius:12,padding:'24px 28px',maxWidth:380,width:'100%'}} onClick={e => e.stopPropagation()}>
-        <h3 style={{fontSize:16,fontWeight:600,marginBottom:4}}>Claim this alert</h3>
-        <p style={{fontSize:12,color:'var(--ink3)',marginBottom:16}}>
-          {item.name} · paid {money(expensive.final_price)} on {fmt(expensive.purchase_date)}
-        </p>
-
-        {err && <div style={{padding:'8px 12px',background:'var(--red-bg)',color:'var(--red-tx)',borderRadius:8,fontSize:12,marginBottom:12}}>{err}</div>}
-
-        {canPriceMatch ? (
-          <div style={{marginBottom:16}}>
-            <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>What happened?</div>
-            <div style={{display:'flex',gap:8}}>
-              <button
-                onClick={() => setClaimType('price_match')}
-                style={{flex:1,padding:'9px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
-                  border:`2px solid ${claimType==='price_match' ? 'var(--green)' : 'var(--border)'}`,
-                  background: claimType==='price_match' ? 'var(--green-bg)' : 'transparent',
-                  color: claimType==='price_match' ? 'var(--green)' : 'var(--ink2)'}}
-              >↺ Price match</button>
-              <button
-                onClick={() => setClaimType('return')}
-                style={{flex:1,padding:'9px',borderRadius:8,cursor:'pointer',fontSize:13,fontWeight:600,
-                  border:`2px solid ${claimType==='return' ? 'var(--red-tx)' : 'var(--border)'}`,
-                  background: claimType==='return' ? 'var(--red-bg)' : 'transparent',
-                  color: claimType==='return' ? 'var(--red-tx)' : 'var(--ink2)'}}
-              >↩ Return</button>
-            </div>
-            <div style={{fontSize:11,color:'var(--ink3)',marginTop:6}}>
-              Bought {daysSince}d ago — within Costco's ~30-day price-adjustment window
-            </div>
-          </div>
-        ) : (
-          <div style={{marginBottom:16,padding:'10px 12px',background:'var(--cream2)',borderRadius:8,fontSize:12,color:'var(--ink2)'}}>
-            Bought {daysSince}d ago — outside the price-match window, so this is logged as a return.
-          </div>
-        )}
-
-        <div style={{marginBottom:14}}>
-          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Amount recovered</div>
-          <input
-            type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)}
-            style={{width:'100%',fontSize:14,padding:'7px 10px',border:'1px solid var(--border)',borderRadius:8,fontFamily:'var(--mono)'}}
-          />
-        </div>
-
-        <div style={{marginBottom:20}}>
-          <div style={{fontSize:11,fontWeight:600,color:'var(--ink3)',textTransform:'uppercase',letterSpacing:'.05em',marginBottom:6}}>Who claimed it?</div>
-          <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
-            {PAYERS.map(p => (
-              <button key={p} onClick={() => setPayer(p)} style={{
-                padding:'5px 12px',borderRadius:999,fontSize:12,fontWeight:600,cursor:'pointer',
-                border:`2px solid ${payer===p ? PAYER_COLORS[p]?.color : 'var(--border)'}`,
-                background: payer===p ? PAYER_COLORS[p]?.bg : 'transparent',
-                color:      payer===p ? PAYER_COLORS[p]?.color : 'var(--ink2)',
-              }}>{p}</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{display:'flex',gap:10}}>
-          <button onClick={onClose} style={{flex:1,padding:'9px',borderRadius:8,border:'1px solid var(--border)',background:'transparent',fontSize:13,cursor:'pointer'}}>Cancel</button>
-          <button onClick={confirm} disabled={saving} style={{flex:2,padding:'9px',borderRadius:8,border:'none',background:'var(--green)',color:'#fff',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-            {saving ? 'Saving…' : 'Confirm claim'}
-          </button>
-        </div>
-      </div>
-    </div>
   )
 }
 
@@ -281,8 +209,8 @@ function ItemsPageContent() {
   const [returns,      setReturns]      = useState<ItemHistory[]>([])
   const [retLoading,   setRetLoading]   = useState(false)
   const [retFilter,    setRetFilter]    = useState('')
-  const [claimsSummary, setClaimsSummary] = useState({ count: 0, total: 0 })
-  const [claimingItem,  setClaimingItem]  = useState<ItemHistory | null>(null)
+  const [retScope,     setRetScope]     = useState<'all' | 'eligible'>('all')
+  const [claimsSummary, setClaimsSummary] = useState({ count: 0 })
   const retFetchedAt = useRef<number>(0)
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -508,17 +436,9 @@ function ItemsPageContent() {
       {/* Returns mode (price alerts) */}
       {mode === 'returns' && (
         <>
-          {claimingItem && (
-            <ClaimModal
-              item={claimingItem}
-              onClose={() => setClaimingItem(null)}
-              onClaimed={() => { setClaimingItem(null); loadReturns() }}
-            />
-          )}
-
           {!retLoading && claimsSummary.count > 0 && (
-            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:12,fontSize:13,color:'var(--green)',fontWeight:500}}>
-              ✓ {claimsSummary.count} claimed · {money(claimsSummary.total)} recovered
+            <div style={{fontSize:13,color:'var(--green)',fontWeight:500,marginBottom:12}}>
+              ✓ {claimsSummary.count} claimed
             </div>
           )}
 
@@ -534,8 +454,23 @@ function ItemsPageContent() {
             </div>
           )}
 
-          {!retLoading && returns.length > 0 && (
+          {!retLoading && returns.length > 0 && (() => {
+            const scoped  = retScope === 'eligible' ? returns.filter(i => daysSince(i.max_price_purchase!.purchase_date) <= 30) : returns
+            const visible = retFilter
+              ? scoped.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase()))
+              : scoped
+            return (
             <>
+              <div style={{display:'flex',gap:6,marginBottom:12,flexWrap:'wrap'}}>
+                <button
+                  onClick={() => setRetScope('all')}
+                  style={{fontSize:12,fontWeight:600,padding:'5px 12px',borderRadius:999,cursor:'pointer',border:`1px solid ${retScope==='all' ? 'var(--ink2)' : 'var(--border2)'}`,background: retScope==='all' ? 'var(--ink2)' : 'transparent',color: retScope==='all' ? '#fff' : 'var(--ink2)'}}
+                >All ({returns.length})</button>
+                <button
+                  onClick={() => setRetScope('eligible')}
+                  style={{fontSize:12,fontWeight:600,padding:'5px 12px',borderRadius:999,cursor:'pointer',border:`1px solid ${retScope==='eligible' ? 'var(--green)' : 'var(--border2)'}`,background: retScope==='eligible' ? 'var(--green)' : 'transparent',color: retScope==='eligible' ? '#fff' : 'var(--ink2)'}}
+                >↺ Price-match eligible (≤30d)</button>
+              </div>
               <div className="search-wrap" style={{marginBottom:12}}>
                 <div className="sinput">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -551,7 +486,7 @@ function ItemsPageContent() {
                 </div>
               </div>
               <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
-                These items are cheaper now than a previous purchase. Bring the linked receipt to get a refund or rebuy at the lower price. Green days = likely within return window. Once you've acted on one, tap <strong>✓ Claim</strong> so it's tracked — a return drops off the list, a price match stays in case the price drops again later.
+                Each row is one specific purchase — the price and date under &ldquo;You paid&rdquo; are that purchase, and the buttons act on that purchase only. <strong>↩ Return</strong> is always available; <strong>↺ Match</strong> only shows within Costco&rsquo;s ~30-day price-adjustment window. Either way, only that purchase drops off — a different purchase of the same item can still show up later.
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -567,15 +502,18 @@ function ItemsPageContent() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(retFilter ? returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())) : returns).map(item => <ReturnRow key={item.item_code ?? item.name} item={item} onClaim={setClaimingItem}/>)}
+                    {visible.map(item => <ReturnRow key={`${item.item_code ?? item.name}:${item.max_price_purchase!.receipt_id}`} item={item} onClaimed={loadReturns}/>)}
                   </tbody>
                 </table>
-                {retFilter && returns.filter(i => i.name.toLowerCase().includes(retFilter.toLowerCase()) || (i.item_code ?? '').toLowerCase().includes(retFilter.toLowerCase())).length === 0 && (
-                  <p style={{textAlign:'center',color:'var(--ink3)',fontSize:13,padding:'24px 0'}}>No items match &ldquo;{retFilter}&rdquo;</p>
+                {visible.length === 0 && (
+                  <p style={{textAlign:'center',color:'var(--ink3)',fontSize:13,padding:'24px 0'}}>
+                    {retFilter ? <>No items match &ldquo;{retFilter}&rdquo;</> : 'No items in this window'}
+                  </p>
                 )}
               </div>
             </>
-          )}
+            )
+          })()}
         </>
       )}
 

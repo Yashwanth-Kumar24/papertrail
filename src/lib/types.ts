@@ -149,12 +149,12 @@ export interface ItemHistory {
 }
 
 // A logged "I acted on this Price Alert" event — see price_alert_claims in
-// schema.sql. claimed_amount is always money recovered, for both types.
+// schema.sql. claim_type is a record of why (return vs price match); both
+// are treated identically for exclusion purposes.
 export interface PriceAlertClaim {
   item_code: string
   receipt_id: string
   claim_type: 'return' | 'price_match'
-  claimed_amount: number
 }
 
 // A single returned line item — from item_returns (the complement of

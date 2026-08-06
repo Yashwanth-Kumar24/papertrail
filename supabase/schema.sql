@@ -181,20 +181,17 @@ create table recurring_payments (
 -- like spoiled food, and a price match produces no receipt at all, so there
 -- is nothing reliable to infer this from). One row = one specific overpriced
 -- purchase instance (item_code + the receipt it was overpaid on) that's been
--- resolved. claimed_amount is always "money recovered," regardless of type —
--- for a return that's the refund; for a price match it's the credited
--- difference, NOT the new price — which keeps the summary total a plain sum.
+-- resolved. claim_type is a record of WHY (for the person's own reference)
+-- only — both types are excluded from future return-candidate checks
+-- identically; a different, still-unclaimed purchase of the same item_code
+-- remains free to surface as its own opportunity. No amount is captured: a
+-- return's refund and a price match's credit are both already on the
+-- receipt/statement, so there is nothing this table needs to total.
 create table price_alert_claims (
   id             uuid          primary key default gen_random_uuid(),
   item_code      text          not null,
   receipt_id     uuid          not null references receipts(id) on delete cascade,
-  -- The specific overpriced purchase being resolved.
   claim_type     text          not null check (claim_type in ('return', 'price_match')),
-  -- 'return'      -> excluded permanently from future return-candidate checks
-  -- 'price_match' -> stays eligible, compared at (original price - claimed_amount)
-  --                  going forward, so a further future price drop can still
-  --                  surface as a new, distinct opportunity
-  claimed_amount numeric(10,2) not null,
   claimed_by     text,
   created_at     timestamptz   not null default now(),
   unique (item_code, receipt_id)

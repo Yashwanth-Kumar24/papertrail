@@ -624,20 +624,22 @@ export async function replaceReceiptItems(
 }
 
 // ── Return candidates (items where price trended up) ───────
-// Claims-aware: a 'return' claim removes that specific purchase from
-// candidacy permanently (nothing left to compare — the item and the money
-// are both gone); a 'price_match' claim keeps it eligible but at its
-// corrected price (original − money recovered), so a further future price
-// drop can still surface as a new, distinct opportunity. This is the one
-// function both the Prices page and the weekly cron call (see
-// api/cron/price-alert/route.ts), so claimed alerts disappear from both
-// automatically — no separate cron-side bookkeeping needed.
+// Claims-aware: claiming EITHER type excludes that one specific purchase
+// (item_code + receipt_id) from candidacy going forward — permanently. A
+// price match doesn't get special "corrected price" bookkeeping: since it's
+// excluded from candidacy just like a return, the underlying comparison
+// naturally falls back to whatever purchase is next-highest for that item,
+// so a further future price drop on a DIFFERENT purchase can still surface
+// as its own opportunity — no amount needs to be tracked for that to work.
+// This is the one function both the Prices page and the weekly cron call
+// (see api/cron/price-alert/route.ts), so claimed alerts disappear from
+// both automatically — no separate cron-side bookkeeping needed.
 export async function getReturnCandidates(): Promise<import('./types').ItemHistory[]> {
   // Step 1: DB function returns only qualifying item_codes (fast, no row limit issues).
-  // Deliberately claims-unaware — it's a coarse, fast pre-filter; claim
-  // adjustments only ever lower a purchase's effective price, so anything
-  // that fails the raw (unadjusted) check here could never pass after
-  // adjustment either. Precision happens in step 2 below.
+  // Deliberately claims-unaware — it's a coarse, fast pre-filter; excluding a
+  // claimed purchase only ever removes a candidate, never adds one, so
+  // anything that fails the raw (unfiltered) check here could never pass
+  // after filtering either. Precision happens in step 2 below.
   const { data: candidates, error: rpcErr } = await supabase.rpc('get_return_candidates')
   if (rpcErr) throw new Error(rpcErr.message)
 
@@ -655,19 +657,10 @@ export async function getReturnCandidates(): Promise<import('./types').ItemHisto
   ])
   if (error) throw new Error(error.message)
 
-  const returnedKeys   = new Set(claims.filter(c => c.claim_type === 'return').map(c => `${c.item_code}:${c.receipt_id}`))
-  const priceMatchByKey = new Map(claims.filter(c => c.claim_type === 'price_match').map(c => [`${c.item_code}:${c.receipt_id}`, c.claimed_amount]))
+  const claimedKeys = new Set(claims.map(c => `${c.item_code}:${c.receipt_id}`))
+  const unclaimed = (data ?? []).filter((row: any) => !claimedKeys.has(`${row.item_code}:${row.receipt_id}`))
 
-  const adjusted = (data ?? [])
-    .filter((row: any) => !returnedKeys.has(`${row.item_code}:${row.receipt_id}`))
-    .map((row: any) => {
-      const recovered = priceMatchByKey.get(`${row.item_code}:${row.receipt_id}`)
-      return recovered != null
-        ? { ...row, final_price: Math.max(0, Number(row.final_price) - recovered) }
-        : row
-    })
-
-  return groupHistory(adjusted)
+  return groupHistory(unclaimed)
     .filter(i => i.purchases.length > 1 && i.max_price > i.latest_price)
     .sort((a, b) => (b.max_price - b.latest_price) - (a.max_price - a.latest_price))
 }
@@ -676,43 +669,40 @@ async function getPriceAlertClaims(itemCodes: string[]): Promise<import('./types
   if (!itemCodes.length) return []
   const { data, error } = await supabase
     .from('price_alert_claims')
-    .select('item_code, receipt_id, claim_type, claimed_amount')
+    .select('item_code, receipt_id, claim_type')
     .in('item_code', itemCodes)
   if (error) throw new Error(error.message)
   return (data ?? []) as import('./types').PriceAlertClaim[]
 }
 
-// Records that a Price Alert row was acted on. Upsert on (item_code,
-// receipt_id) — re-claiming the same instance (e.g. fixing a wrong claim
-// type) corrects it in place rather than erroring on the unique constraint.
+// Records that one specific overpriced purchase (item_code + receipt_id) was
+// acted on. Upsert on (item_code, receipt_id) — re-claiming the same
+// instance (e.g. fixing a wrong claim type) corrects it in place rather than
+// erroring on the unique constraint.
 export async function claimPriceAlert(
   itemCode: string,
   receiptId: string,
   claimType: 'return' | 'price_match',
-  claimedAmount: number,
   claimedBy?: string,
 ): Promise<void> {
   const { error } = await supabase
     .from('price_alert_claims')
     .upsert({
-      item_code:      itemCode,
-      receipt_id:     receiptId,
-      claim_type:     claimType,
-      claimed_amount: claimedAmount,
-      claimed_by:     claimedBy ?? null,
+      item_code:  itemCode,
+      receipt_id: receiptId,
+      claim_type: claimType,
+      claimed_by: claimedBy ?? null,
     }, { onConflict: 'item_code,receipt_id' })
   if (error) throw new Error(error.message)
 }
 
-// Lifetime total shown at the top of the Price Alerts page.
-export async function getPriceAlertClaimsSummary(): Promise<{ count: number; total: number }> {
-  const { data, error } = await supabase.from('price_alert_claims').select('claimed_amount')
+// Lifetime count shown at the top of the Price Alerts page.
+export async function getPriceAlertClaimsSummary(): Promise<{ count: number }> {
+  const { count, error } = await supabase
+    .from('price_alert_claims')
+    .select('*', { count: 'exact', head: true })
   if (error) throw new Error(error.message)
-  const rows = data ?? []
-  return {
-    count: rows.length,
-    total: rows.reduce((s, c: any) => s + Number(c.claimed_amount), 0),
-  }
+  return { count: count ?? 0 }
 }
 
 // ── Receipts by date (for heatmap day detail) ──────────────

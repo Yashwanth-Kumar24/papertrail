@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { saveReceipt, PossibleDuplicateError } from '@/lib/queries'
+import { getOwnPushEndpoint } from '@/lib/push'
 import { PAYERS, PAYER_COLORS } from '@/lib/types'
 import type { ParsedReceipt } from '@/lib/types'
 
@@ -715,17 +716,19 @@ export default function CostcoPage() {
       }
     }
 
-    // One summary notification — no per-receipt spam
+    // One summary notification — no per-receipt spam. excludeEndpoint skips
+    // notifying this same device (see lib/push.ts).
     if (imported > 0) {
-      fetch('/api/notify', {
+      getOwnPushEndpoint().then(excludeEndpoint => fetch('/api/notify', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'Costco receipts imported',
           body:  `${importPaidBy} imported ${imported} Costco receipt${imported !== 1 ? 's' : ''} · $${importedTotal.toFixed(2)}`,
           url:   '/receipts',
+          excludeEndpoint,
         }),
-      }).catch(() => {})
+      })).catch(() => {})
     }
 
     setImporting(false)

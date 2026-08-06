@@ -58,8 +58,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 - **Store filter** — dropdown shows only stores you actually have receipts for (populated dynamically from DB, not a hardcoded list); persists across sessions via localStorage
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity, links directly to the return receipt
-  - **✓ Claim** — log that you acted on an alert. Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human action. **Return** removes that specific overpriced purchase from future alerts permanently. **Price match** keeps it eligible, but compares future prices against the corrected (post-match) amount instead of the stale original — so a further price drop later can still surface as a new opportunity. Price match is only offered within Costco's ~30-day price-adjustment window; past that, only Return is available. A running total ("✓ N claimed · $X recovered") shows at the top of the tab
+- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity. Each row is one specific overpriced purchase (its date and price are shown under "You paid"), with two buttons that act only on that purchase: **↩ Return** (always available) and **↺ Match** (only within Costco's ~30-day price-adjustment window). Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human tap. Either button drops that one purchase off the list permanently; a different, still-unclaimed purchase of the same item can still surface as its own row later. A **filter pill** ("↺ Price-match eligible (≤30d)") narrows the list to just what's still inside the match window. A running count ("✓ N claimed") shows at the top of the tab
 - **↩ Refunds mode** — a separate search for items you've actually returned (not to be confused with Price alerts above, which is about *current* price drops). Search by name or item code; results show refund amount, date, store, and a link to the return receipt. Sourced from a dedicated dataset that never touches the main search's price-trend data
 - **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
@@ -206,8 +205,9 @@ src/
       subscribe/route.ts        Server route — register push subscriptions
       costco/route.ts           Server route — Costco GraphQL API proxy
       cron/
-        price-alert/route.ts    Cron route — Wednesday and Saturday price alert push (protected by CRON_SECRET)
-        budget-alert/route.ts   Cron route — 1st and 15th of month budget push at 80% threshold (protected by CRON_SECRET)
+        price-alert/route.ts     Cron route — Wednesday and Saturday price alert push (protected by CRON_SECRET)
+        budget-alert/route.ts    Cron route — 1st and 15th of month budget push at 80% threshold (protected by CRON_SECRET)
+        recurring-alert/route.ts Cron route — daily bill due/overdue push at fixed checkpoints (protected by CRON_SECRET)
     sw/route.ts                 Service worker — push events + notification click → deep link
     expenses/                   Expenses shell — Receipts + Recurring sub-tabs
     receipts/                   Receipt list + [id] detail/edit/share
@@ -239,7 +239,7 @@ src/
     registry.ts                 parseReceipt() + mergeReceipts()
 supabase/
   schema.sql                    DB schema + RPC functions — run once in Supabase SQL editor
-vercel.json                     Cron schedules — price alert Wed+Sat 9am UTC; budget alert 1st+15th 9am UTC
+vercel.json                     Cron schedules — price alert Wed+Sat, budget alert 1st+15th, recurring alert daily, all 16:30 UTC (~9am Pacific)
 ```
 
 ---
@@ -286,8 +286,7 @@ recurring_payments:
 
 price_alert_claims:
   id, item_code, receipt_id,
-  claim_type,       -- 'return' | 'price_match'
-  claimed_amount,   -- money recovered — same meaning for both types
+  claim_type,       -- 'return' | 'price_match' — record of why, treated identically
   claimed_by, created_at
   -- unique (item_code, receipt_id) — one claim per specific overpriced purchase
 
@@ -404,7 +403,7 @@ On Costco-imported receipts, the detail page renders a scannable **Code 128 barc
 
 ## Budget push alerts
 
-On the 1st and 15th of each month at 9am UTC, a Vercel cron job hits `/api/cron/budget-alert`. It checks all active budgets (Finance → Budget tab) and sends a push notification if any category has reached 80% or more of its monthly budget:
+On the 1st and 15th of each month at 16:30 UTC (~9am Pacific), a Vercel cron job hits `/api/cron/budget-alert`. It checks all active budgets (Finance → Budget tab) and sends a push notification if any category has reached 80% or more of its monthly budget:
 
 ```
 PaperTrail · Budget Alert
@@ -417,7 +416,7 @@ Tapping navigates directly to `/finance`. If all categories are under 80%, no no
 
 ## Weekly price alert push
 
-Every Wednesday and Saturday at 9am UTC, a Vercel cron job hits `/api/cron/price-alert`. It counts items where the most recent purchase is cheaper than a past purchase (return/price-match opportunities) and sends one push notification per subscriber:
+Every Wednesday and Saturday at 16:30 UTC (~9am Pacific), a Vercel cron job hits `/api/cron/price-alert`. It counts items where the most recent purchase is cheaper than a past purchase (return/price-match opportunities) — via the same `get_return_candidates()`-backed function the Prices page itself uses, so a claimed alert (see ✓ Claim above) is excluded here too — and sends one push notification per subscriber:
 
 ```
 PaperTrail · Price Alerts
@@ -425,6 +424,19 @@ PaperTrail · Price Alerts
 ```
 
 Tapping navigates directly to `/prices?mode=returns`. If zero candidates exist, no notification is sent. The endpoint is protected by `CRON_SECRET`.
+
+---
+
+## Recurring bill push alerts
+
+Daily at 16:30 UTC (~9am Pacific), a Vercel cron job hits `/api/cron/recurring-alert`. Rather than notifying every day a bill sits in "due soon" or "overdue" (which would mean a fresh push every single morning for the same unpaid bill), it only fires at specific checkpoints per bill: 3 days before due, on the due date, the day it first goes overdue, then once a week for as long as it stays overdue and unpaid.
+
+```
+PaperTrail · Bills Due
+Overdue: Internet · Due soon: Rent (3d)
+```
+
+Tapping navigates to `/expenses`. Uses the same `getRecurring()`/cycle-window logic as the Recurring page, so it can't disagree with what the app itself shows as paid/unpaid. No notification if nothing is at a checkpoint that day. The endpoint is protected by `CRON_SECRET`.
 
 ---
 
@@ -442,7 +454,7 @@ On the Receipts page, click the checkbox (top-right of each card) to select rece
 
 ## Push notifications
 
-When any household member saves a new receipt, all subscribed devices get a push notification showing who paid, which store, and the total. To subscribe, install the PWA and accept the notification prompt shown automatically in the app.
+When any household member saves a new receipt, every other subscribed device gets a push notification showing who paid, which store, and the total — the device that just saved it is skipped (`/api/notify` accepts an `excludeEndpoint`, looked up client-side via `lib/push.ts`), so you don't get notified about your own action. To subscribe, install the PWA and accept the notification prompt shown automatically in the app.
 
 Implemented via the Web Push API. Subscriptions stored in Supabase. Server-side sending via `/api/notify`.
 
