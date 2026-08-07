@@ -208,14 +208,13 @@ create table price_alert_claims (
 -- ── price_alert_exclusions ──────────────────────────────────
 -- Items that should never surface as a Price Alert at all — e.g. gold
 -- bullion or gas, whose price swings with the market and were never a
--- "you got overcharged" signal in the first place. Added two ways: the
--- Excluded tab's manual form (Code or Name, exactly one — for pre-empting
--- something before it's ever flagged), or the 🚫 button on an existing
--- alert row (always sends both item_code and item_name — code is what
--- actually matches, name is only along for a readable Excluded-tab list;
--- see the exclude() button in prices/page.tsx). Either way, get_return_
--- candidates() below filters it out on the very next call, checking both
--- item_code and name, so nothing else needs to stay in sync.
+-- "you got overcharged" signal in the first place. Only added via the 🚫
+-- button on an existing Price Alerts row (see exclude() in
+-- prices/page.tsx) — no manual add form. That button always sends both
+-- item_code and item_name — code is what actually matches in
+-- get_return_candidates() below, name is only along so the Excluded tab
+-- shows something readable next to the code. item_name nullable rather
+-- than dropped entirely in case a manual/codeless path is ever added later.
 create table price_alert_exclusions (
   id         uuid        primary key default gen_random_uuid(),
   item_code  text,

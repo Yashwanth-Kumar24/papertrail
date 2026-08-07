@@ -318,62 +318,6 @@ function ExclusionRow({ exclusion, onRemoved }: { exclusion: PriceAlertExclusion
   )
 }
 
-// Add form for the Excluded tab — user picks Code or Name, types the exact
-// value, submits. No per-alert-row button; this is the only way to add one.
-function ExclusionForm({ onAdded }: { onAdded: () => void }) {
-  const [matchBy, setMatchBy] = useState<'code' | 'name'>('code')
-  const [value,   setValue]   = useState('')
-  const [busy,    setBusy]    = useState(false)
-  const [err,     setErr]     = useState('')
-
-  async function submit() {
-    const v = value.trim()
-    if (!v || busy) return
-    setBusy(true); setErr('')
-    try {
-      await addPriceAlertExclusion(matchBy === 'code' ? v : undefined, matchBy === 'name' ? v : undefined)
-      setValue('')
-      onAdded()
-    } catch (e: any) {
-      setErr(e.message ?? 'Failed to add exclusion.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div style={{marginBottom:16}}>
-      <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-        <div style={{display:'flex',gap:4}}>
-          <button
-            onClick={() => setMatchBy('code')}
-            style={{fontSize:12,fontWeight:600,padding:'5px 10px',borderRadius:999,cursor:'pointer',border:`1px solid ${matchBy==='code' ? 'var(--ink2)' : 'var(--border2)'}`,background: matchBy==='code' ? 'var(--ink2)' : 'transparent',color: matchBy==='code' ? '#fff' : 'var(--ink2)'}}
-          >Code</button>
-          <button
-            onClick={() => setMatchBy('name')}
-            style={{fontSize:12,fontWeight:600,padding:'5px 10px',borderRadius:999,cursor:'pointer',border:`1px solid ${matchBy==='name' ? 'var(--ink2)' : 'var(--border2)'}`,background: matchBy==='name' ? 'var(--ink2)' : 'transparent',color: matchBy==='name' ? '#fff' : 'var(--ink2)'}}
-          >Name</button>
-        </div>
-        <input
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') submit() }}
-          placeholder={matchBy === 'code' ? 'Item code, e.g. 1844406' : 'Item name, e.g. GOLD BULLION'}
-          style={{flex:1,minWidth:180,fontSize:13,padding:'7px 10px',border:'1px solid var(--border)',borderRadius:8,fontFamily:'var(--sans)'}}
-        />
-        <button
-          onClick={submit}
-          disabled={busy || !value.trim()}
-          style={{fontSize:13,fontWeight:600,padding:'7px 14px',borderRadius:8,border:'none',background:'var(--green)',color:'#fff',cursor: busy ? 'default' : 'pointer',opacity: !value.trim() ? 0.5 : 1}}
-        >
-          {busy ? 'Adding…' : '+ Add'}
-        </button>
-      </div>
-      {err && <div style={{marginTop:8,fontSize:12,color:'var(--red-tx)'}}>{err}</div>}
-    </div>
-  )
-}
-
 function RefundRow({ item }: { item: ReturnedItem }) {
   return (
     <tr>
@@ -482,19 +426,28 @@ function ItemsPageContent() {
     }).finally(() => setRetLoading(false))
   }, [])
 
-  // Restore price alerts / refunds-search mode when navigating back from a
-  // receipt (e.g. after clicking "↩ Check refunds →" then a Receipt link).
+  // Keeps the visible tab in sync with the URL on every change, not just on
+  // mount — needed for browser back/forward (e.g. after "↩ Check refunds →"
+  // pushes a history entry, going back must flip the tab back to Price
+  // Alerts, not just change the URL underneath an unchanged view). Guarded
+  // on `mode` already matching so it's a no-op after the explicit
+  // enterReturns()/enterRefunds()/enterRefundsFor() handlers below, which
+  // already update `mode` directly — this effect only has real work to do
+  // when the URL changes WITHOUT one of those having run, i.e. back/forward.
   useEffect(() => {
-    if (searchParams.get('mode') === 'returns') {
+    const urlMode = searchParams.get('mode')
+    if (urlMode === 'returns' && mode !== 'returns') {
       setMode('returns')
       loadPriceAlerts()
-    } else if (searchParams.get('mode') === 'refunds') {
+    } else if (urlMode === 'refunds' && mode !== 'refunds') {
       setMode('refunds')
       const q = searchParams.get('q')
       if (q) { setRefundQuery(q); runRefundSearch(q) }
+    } else if (!urlMode && mode !== 'search') {
+      setMode('search')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // run once on mount only
+  }, [searchParams])
 
   function enterReturns() {
     setMode('returns')
@@ -511,11 +464,14 @@ function ItemsPageContent() {
 
   // From a Price Alerts row: jump to Refunds pre-searched by item code, so
   // you can check whether it's already gone through as an actual return.
+  // Uses push (not replace, unlike the tab buttons above) — this is a
+  // drill-down from Price Alerts, not a tab switch, so back should return
+  // to exactly where you were instead of skipping past it.
   function enterRefundsFor(itemCode: string) {
     setMode('refunds')
     setRefundQuery(itemCode)
     runRefundSearch(itemCode)
-    router.replace(`/prices?mode=refunds&q=${encodeURIComponent(itemCode)}`)
+    router.push(`/prices?mode=refunds&q=${encodeURIComponent(itemCode)}`)
   }
 
   return (
@@ -770,13 +726,12 @@ function ItemsPageContent() {
           {!retLoading && retTab === 'excluded' && (
             <>
               <div style={{padding:'10px 14px',background:'var(--cream2)',borderRadius:'var(--r)',fontSize:13,color:'var(--ink2)',marginBottom:12}}>
-                Items here never show up as a Price Alert — useful for things like gold bullion or gift cards that swing in value but were never a &ldquo;you got overcharged&rdquo; signal. Gas is already excluded automatically. Add an item&rsquo;s code (from the badge shown on its row elsewhere in Prices) or its exact name below.
+                Items here never show up as a Price Alert — useful for things like gold bullion or gas, which swing in value but were never a &ldquo;you got overcharged&rdquo; signal. Tap 🚫 next to an item on the All tab to add one.
               </div>
-              <ExclusionForm onAdded={loadPriceAlerts}/>
               {exclusions.length === 0 ? (
                 <div className="empty">
                   <p style={{fontWeight:500}}>Nothing excluded</p>
-                  <p style={{fontSize:13}}>Add an item code or name above to keep it out of Price Alerts</p>
+                  <p style={{fontSize:13}}>Tap 🚫 next to an item on the All tab to keep it out of Price Alerts</p>
                 </div>
               ) : (
                 <div className="tbl-wrap">
