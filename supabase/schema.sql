@@ -226,6 +226,25 @@ create unique index on price_alert_exclusions(item_code) where item_code is not 
 create unique index on price_alert_exclusions(lower(item_name)) where item_code is null;
 
 
+-- ── price_alert_acknowledgments ──────────────────────────────
+-- A lighter, self-expiring sibling to price_alert_exclusions — "I've seen
+-- this item's current price gap and I'm not acting on it right now" rather
+-- than "never show this item again." Unlike exclusions, this is expected to
+-- come back on its own: get_return_candidates() below suppresses an
+-- item_code only while its most recent purchase is no newer than
+-- acknowledged_at. The moment a purchase newer than that exists, the
+-- suppression no longer applies and the item reappears automatically — no
+-- separate job or manual re-check needed, since candidates are always
+-- recomputed fresh on every load anyway. Acknowledging again (upsert on
+-- item_code) just pushes acknowledged_at forward.
+create table price_alert_acknowledgments (
+  id              uuid        primary key default gen_random_uuid(),
+  item_code       text        not null,
+  acknowledged_at timestamptz not null default now(),
+  unique (item_code)
+);
+
+
 -- ── Indexes ────────────────────────────────────────────────
 create index on receipts(brand);
 create index on receipts(purchase_date desc);
@@ -341,24 +360,28 @@ $$;
 -- copy of this logic used to live in the cron route and could silently
 -- disagree with the UI.
 --
--- Layers exclusions on top, from price_alert_exclusions (user-managed via
--- the Excluded tab — gas, gold bullion, or anything else whose price swings
--- are never a real "you got overcharged" signal). Checks BOTH item_code and
--- name — a name-based exclusion has to match on `name` since a coded item
--- still has a name and a name-only exclusion row has no code to match on.
+-- Layers two suppressions on top: price_alert_exclusions (permanent — gas,
+-- gold bullion, anything whose price swings were never a real "you got
+-- overcharged" signal; checks BOTH item_code and name, since a name-based
+-- exclusion has to match on `name` when there's no code to match on) and
+-- price_alert_acknowledgments (temporary — "I've seen this gap, not acting
+-- on it now," suppressed only until a newer purchase than acknowledged_at
+-- shows up, then it reappears on its own with no extra bookkeeping).
 create or replace function get_return_candidates()
 returns table(item_code text)
 language sql
 stable
 as $$
-  select item_code
-  from item_purchase_history
-  where item_code is not null and final_price > 0
-    and item_code not in (select item_code from price_alert_exclusions where item_code is not null)
-    and upper(trim(name)) not in (select upper(trim(item_name)) from price_alert_exclusions where item_name is not null)
-  group by item_code
+  select iph.item_code
+  from item_purchase_history iph
+  left join price_alert_acknowledgments ack on ack.item_code = iph.item_code
+  where iph.item_code is not null and iph.final_price > 0
+    and iph.item_code not in (select item_code from price_alert_exclusions where item_code is not null)
+    and upper(trim(iph.name)) not in (select upper(trim(item_name)) from price_alert_exclusions where item_name is not null)
+  group by iph.item_code, ack.acknowledged_at
   having count(*) > 1
-     and max(final_price) > (array_agg(final_price order by purchase_date desc))[1];
+     and max(iph.final_price) > (array_agg(iph.final_price order by iph.purchase_date desc))[1]
+     and (ack.acknowledged_at is null or max(iph.purchase_date) > ack.acknowledged_at);
 $$;
 
 
@@ -626,8 +649,9 @@ alter table push_subscriptions disable row level security;
 alter table budgets            disable row level security;
 alter table recurring          disable row level security;
 alter table recurring_payments disable row level security;
-alter table price_alert_claims     disable row level security;
-alter table price_alert_exclusions disable row level security;
+alter table price_alert_claims          disable row level security;
+alter table price_alert_exclusions      disable row level security;
+alter table price_alert_acknowledgments disable row level security;
 
 
 -- ── Duplicate prevention indexes ──────────────────────────

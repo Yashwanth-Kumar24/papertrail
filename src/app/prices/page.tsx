@@ -1,9 +1,9 @@
 'use client'
 import { useState, useCallback, useRef, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getClaimedAlerts, discardClaim, getPriceAlertExclusions, addPriceAlertExclusion, removePriceAlertExclusion } from '@/lib/queries'
+import { searchItems, searchReturnedItems, getReturnCandidates, getDistinctBrands, claimPriceAlert, getClaimedAlerts, discardClaim, getPriceAlertExclusions, addPriceAlertExclusion, removePriceAlertExclusion, acknowledgeItem, getAcknowledgedItems, unacknowledgeItem } from '@/lib/queries'
 import { useRouter, useSearchParams } from 'next/navigation'
-import type { ItemHistory, ReturnedItem, ClaimedAlert, PriceAlertExclusion } from '@/lib/types'
+import type { ItemHistory, ReturnedItem, ClaimedAlert, PriceAlertExclusion, AcknowledgedItem } from '@/lib/types'
 import { BRAND_LABELS } from '@/lib/types'
 
 const PRICES_BRAND_KEY = 'prices_brand_filter'
@@ -121,9 +121,10 @@ function ReturnRow({ item, onChanged, onCheckRefunds }: {
   onChanged: () => void
   onCheckRefunds: (itemCode: string) => void
 }) {
-  const [open,      setOpen]      = useState(true)
-  const [busy,      setBusy]      = useState<ClaimBusy>(null)
-  const [excluding, setExcluding] = useState(false)
+  const [open,        setOpen]        = useState(true)
+  const [busy,        setBusy]        = useState<ClaimBusy>(null)
+  const [excluding,   setExcluding]   = useState(false)
+  const [acking,      setAcking]      = useState(false)
   const latest    = item.purchases[0]
   const expensive = item.max_price_purchase!
   const savings   = item.max_price - item.latest_price
@@ -158,6 +159,21 @@ function ReturnRow({ item, onChanged, onCheckRefunds }: {
     }
   }
 
+  // Dismisses the whole item until a newer purchase than right now exists —
+  // unlike exclude(), this isn't permanent; it comes back on its own the
+  // next time something changes. Reversible sooner too, from the
+  // Acknowledged tab.
+  async function acknowledge() {
+    if (acking) return
+    setAcking(true)
+    try {
+      await acknowledgeItem(item.item_code!)
+      onChanged()
+    } finally {
+      setAcking(false)
+    }
+  }
+
   return (
     <>
       <tr onClick={() => setOpen(o => !o)} style={{cursor:'pointer'}}>
@@ -168,14 +184,24 @@ function ReturnRow({ item, onChanged, onCheckRefunds }: {
               <div style={{fontWeight:500}}>{item.name}</div>
               <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
             </div>
-            <button
-              onClick={e => { e.stopPropagation(); exclude() }}
-              disabled={excluding}
-              title="Never show this item in Price Alerts again"
-              style={{fontSize:14,lineHeight:1,padding:'3px 6px',borderRadius:6,border:'1px solid var(--border2)',background:'none',cursor: excluding ? 'default' : 'pointer',flexShrink:0,opacity: excluding ? 0.5 : 1}}
-            >
-              {excluding ? '…' : '🚫'}
-            </button>
+            <div style={{display:'flex',gap:4,flexShrink:0}}>
+              <button
+                onClick={e => { e.stopPropagation(); acknowledge() }}
+                disabled={acking}
+                title="Dismiss for now — comes back if a newer purchase shows up"
+                style={{fontSize:14,lineHeight:1,padding:'3px 6px',borderRadius:6,border:'1px solid var(--border2)',background:'none',cursor: acking ? 'default' : 'pointer',opacity: acking ? 0.5 : 1}}
+              >
+                {acking ? '…' : '🔕'}
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); exclude() }}
+                disabled={excluding}
+                title="Never show this item in Price Alerts again"
+                style={{fontSize:14,lineHeight:1,padding:'3px 6px',borderRadius:6,border:'1px solid var(--border2)',background:'none',cursor: excluding ? 'default' : 'pointer',opacity: excluding ? 0.5 : 1}}
+              >
+                {excluding ? '…' : '🚫'}
+              </button>
+            </div>
           </div>
         </td>
         {/* Highest-priced still-unclaimed purchase — a summary figure only, no action here anymore */}
@@ -318,6 +344,42 @@ function ExclusionRow({ exclusion, onRemoved }: { exclusion: PriceAlertExclusion
   )
 }
 
+function AcknowledgedRow({ item, onRemoved }: { item: AcknowledgedItem; onRemoved: () => void }) {
+  const [busy, setBusy] = useState(false)
+
+  async function remove() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await unacknowledgeItem(item.id)
+      onRemoved()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <span className="code-badge">{item.item_code}</span>{' '}
+        <span style={{fontWeight:500}}>{item.item_name}</span>
+      </td>
+      <td style={{fontSize:12,color:'var(--ink2)'}}>
+        {new Date(item.acknowledged_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })}
+      </td>
+      <td>
+        <button
+          onClick={remove}
+          disabled={busy}
+          style={{fontSize:11,fontWeight:600,padding:'3px 9px',borderRadius:999,border:'1px solid var(--border2)',background:'none',color:'var(--ink3)',cursor: busy ? 'default' : 'pointer'}}
+        >
+          {busy ? '…' : '✕ Remove'}
+        </button>
+      </td>
+    </tr>
+  )
+}
+
 function RefundRow({ item }: { item: ReturnedItem }) {
   return (
     <tr>
@@ -352,9 +414,10 @@ function ItemsPageContent() {
   const [returns,      setReturns]      = useState<ItemHistory[]>([])
   const [claimed,      setClaimed]      = useState<ClaimedAlert[]>([])
   const [exclusions,   setExclusions]   = useState<PriceAlertExclusion[]>([])
+  const [acknowledged, setAcknowledged] = useState<AcknowledgedItem[]>([])
   const [retLoading,   setRetLoading]   = useState(false)
   const [retFilter,    setRetFilter]    = useState('')
-  const [retTab,        setRetTab]      = useState<'all' | 'pricematch' | 'claimed' | 'excluded'>('all')
+  const [retTab,        setRetTab]      = useState<'all' | 'pricematch' | 'claimed' | 'excluded' | 'acknowledged'>('all')
   const retFetchedAt = useRef<number>(0)
   const [brandOptions, setBrandOptions] = useState<string[]>([])
   const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -411,18 +474,19 @@ function ItemsPageContent() {
   }, [searchParams, run])
 
   // Shared by the mount-restore effect, enterReturns(), and the post-claim /
-  // post-discard / post-exclusion refresh — one place that fetches the
-  // candidate list, claim log, and exclusion list together, so they never
-  // go out of sync (e.g. adding an exclusion changes both `returns` and
-  // `exclusions` at once).
+  // post-discard / post-exclusion / post-acknowledgment refresh — one place
+  // that fetches the candidate list, claim log, exclusion list, and
+  // acknowledgment list together, so they never go out of sync (e.g. adding
+  // an exclusion changes both `returns` and `exclusions` at once).
   const loadPriceAlerts = useCallback(() => {
     setRetLoading(true)
     Promise.all([
       getReturnCandidates(),
       getClaimedAlerts(),
       getPriceAlertExclusions(),
-    ]).then(([r, c, x]) => {
-      setReturns(r); setClaimed(c); setExclusions(x); retFetchedAt.current = Date.now()
+      getAcknowledgedItems(),
+    ]).then(([r, c, x, a]) => {
+      setReturns(r); setClaimed(c); setExclusions(x); setAcknowledged(a); retFetchedAt.current = Date.now()
     }).finally(() => setRetLoading(false))
   }, [])
 
@@ -621,6 +685,7 @@ function ItemsPageContent() {
             <button onClick={() => setRetTab('all')} style={tabBtn(retTab==='all', 'var(--ink2)')}>All ({returns.length})</button>
             <button onClick={() => setRetTab('pricematch')} style={tabBtn(retTab==='pricematch', 'var(--green)')}>↺ Price match ({priceMatchCount})</button>
             <button onClick={() => setRetTab('claimed')} style={tabBtn(retTab==='claimed', '#1D4ED8')}>✓ Claimed ({claimed.length})</button>
+            <button onClick={() => setRetTab('acknowledged')} style={tabBtn(retTab==='acknowledged', '#92400E')}>🔕 Acknowledged ({acknowledged.length})</button>
             <button onClick={() => setRetTab('excluded')} style={tabBtn(retTab==='excluded', 'var(--ink3)')}>🚫 Excluded ({exclusions.length})</button>
           </div>
 
@@ -657,8 +722,12 @@ function ItemsPageContent() {
                   )}
                 </div>
               </div>
-              <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
-                Each purchase gets its own <strong>↩ Return</strong> (always available) / <strong>↺ Match</strong> (only within Costco&rsquo;s ~30-day price-adjustment window) — claiming one removes just that purchase, see the <strong>✓ Claimed</strong> tab to review or undo. <strong>↩ Check refunds →</strong> jumps to Refunds pre-searched by this item&rsquo;s code, to see if it&rsquo;s already gone through. <strong>🚫</strong> permanently excludes the whole item — undo from the <strong>Excluded</strong> tab.
+              <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:12,color:'#92400E',marginBottom:12,display:'flex',flexWrap:'wrap',rowGap:6,columnGap:18}}>
+                <span><strong>↩ Return</strong> — resolve one purchase, always available</span>
+                <span><strong>↺ Match</strong> — resolve one purchase, ≤30 days only</span>
+                <span><strong>🔕 Acknowledge</strong> — dismiss the item until a newer purchase exists</span>
+                <span><strong>🚫 Exclude</strong> — never show this item again</span>
+                <span><strong>↩ Check refunds</strong> — see if it&rsquo;s already been returned</span>
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -719,6 +788,35 @@ function ItemsPageContent() {
                     </table>
                   </div>
                 </>
+              )}
+            </>
+          )}
+
+          {!retLoading && retTab === 'acknowledged' && (
+            <>
+              <div style={{padding:'10px 14px',background:'var(--cream2)',borderRadius:'var(--r)',fontSize:13,color:'var(--ink2)',marginBottom:12}}>
+                Items here are dismissed for now, not forever — tap 🔕 on the All tab to add one. Unlike 🚫 Excluded, these come back on their own the moment a newer purchase of that item exists; nothing to check manually.
+              </div>
+              {acknowledged.length === 0 ? (
+                <div className="empty">
+                  <p style={{fontWeight:500}}>Nothing acknowledged</p>
+                  <p style={{fontSize:13}}>Tap 🔕 next to an item on the All tab to dismiss it until something changes</p>
+                </div>
+              ) : (
+                <div className="tbl-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Item</th>
+                        <th>Acknowledged</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {acknowledged.map(a => <AcknowledgedRow key={a.id} item={a} onRemoved={loadPriceAlerts}/>)}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
           )}

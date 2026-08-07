@@ -764,6 +764,52 @@ export async function removePriceAlertExclusion(id: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// ── Price alert acknowledgments (Acknowledged tab) ──────────
+// "I've seen this item's current gap, not acting on it now" — unlike an
+// exclusion, get_return_candidates() automatically stops suppressing it the
+// moment a purchase newer than acknowledged_at exists, so there's nothing
+// to keep in sync here either.
+export async function acknowledgeItem(itemCode: string): Promise<void> {
+  const { error } = await supabase
+    .from('price_alert_acknowledgments')
+    .upsert({ item_code: itemCode, acknowledged_at: new Date().toISOString() }, { onConflict: 'item_code' })
+  if (error) throw new Error(error.message)
+}
+
+// item_name isn't stored on the acknowledgment row — fetched separately
+// from item_purchase_history purely for display, since this table (small,
+// household-scale) doesn't need a denormalized copy the way exclusions do.
+export async function getAcknowledgedItems(): Promise<import('./types').AcknowledgedItem[]> {
+  const { data: acks, error } = await supabase
+    .from('price_alert_acknowledgments')
+    .select('id, item_code, acknowledged_at')
+    .order('acknowledged_at', { ascending: false })
+  if (error) throw new Error(error.message)
+  if (!acks?.length) return []
+
+  const itemCodes = acks.map((a: any) => a.item_code)
+  const { data: rows, error: nameErr } = await supabase
+    .from('item_purchase_history')
+    .select('item_code, name')
+    .in('item_code', itemCodes)
+  if (nameErr) throw new Error(nameErr.message)
+
+  const nameByCode = new Map<string, string>()
+  for (const r of rows ?? []) if (!nameByCode.has(r.item_code)) nameByCode.set(r.item_code, r.name)
+
+  return acks.map((a: any) => ({
+    id:              a.id,
+    item_code:       a.item_code,
+    item_name:       nameByCode.get(a.item_code) ?? a.item_code,
+    acknowledged_at: a.acknowledged_at,
+  }))
+}
+
+export async function unacknowledgeItem(id: string): Promise<void> {
+  const { error } = await supabase.from('price_alert_acknowledgments').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
 // ── Receipts by date (for heatmap day detail) ──────────────
 export async function getReceiptsByDate(date: string): Promise<Receipt[]> {
   const { data, error } = await supabase

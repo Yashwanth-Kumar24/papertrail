@@ -183,6 +183,17 @@ export interface PriceAlertExclusion {
   created_at: string
 }
 
+// An item temporarily dismissed from Price Alerts — see
+// price_alert_acknowledgments in schema.sql. Unlike PriceAlertExclusion,
+// this expires on its own once a newer purchase than acknowledged_at
+// exists; item_name here is display-only (fetched separately, not stored).
+export interface AcknowledgedItem {
+  id: string
+  item_code: string
+  item_name: string
+  acknowledged_at: string
+}
+
 // A single returned line item — from item_returns (the complement of
 // item_purchase_history), used by the Prices → Returns search tab.
 export interface ReturnedItem {
