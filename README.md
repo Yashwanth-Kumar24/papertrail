@@ -58,7 +58,7 @@ Three sub-tabs, all respect the date range selector (This week / This month / La
 - **Store filter** — dropdown shows only stores you actually have receipts for (populated dynamically from DB, not a hardcoded list); persists across sessions via localStorage
 - Full purchase history per item: every date, store, and price paid
 - Price trend indicator — up / down / stable / single purchase
-- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity. Four sub-tabs: **All**, **↺ Price match** (purchases ≤30 days old — Costco's price-adjustment window), **✓ Claimed**, and **🚫 Excluded**. The headline row per item is the highest-priced still-unclaimed purchase; expand it to see every remaining unclaimed purchase in that item's history, each with its own Receipt link and — if it's still elevated — **↩ Return** (always available) / **↺ Match** (only within the 30-day window) buttons. Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human tap on one specific line item. Claiming removes that purchase from All/Price match immediately (a different, still-unclaimed purchase of the same item can still surface as the new headline) and adds it to the **Claimed** tab, which shows a running count + total value and lets you **✕ Discard** a claim to undo it (the purchase reappears in All). The **Excluded** tab permanently keeps an item out of Price Alerts entirely — add it by exact item code or name (e.g. gold bullion or gas, whose prices track the market and were never a "you got overcharged" signal)
+- **↑ Price alerts mode** — shows all items where a past purchase is more expensive than the current price; sorted by savings opportunity. Four sub-tabs: **All**, **↺ Price match** (purchases ≤30 days old — Costco's price-adjustment window), **✓ Claimed**, and **🚫 Excluded**. Each item's purchase history is shown expanded by default; every past purchase (not just the priciest one) gets its own **↩ Return** (always available) / **↺ Match** (only within the 30-day window) buttons — claiming one removes just that specific line item on the next load, a different still-unclaimed purchase of the same item can still surface later. Never inferred from scanned receipts (a return can happen for unrelated reasons, and a price match produces no receipt at all) — always a manual, human tap. The headline row's **↩ Check refunds →** jumps to the Refunds tab pre-searched by that item's code, to check whether it's already gone through as an actual return — it no longer links to one arbitrary receipt. A **🚫** button next to the item name permanently excludes that item from Price Alerts (writes to the same list as the Excluded tab's manual add form). Claims land in the **Claimed** tab (running count + total value, **✕ Discard** to undo); exclusions land in the **Excluded** tab (list + **✕ Remove** to undo, plus a manual add-by-code-or-name form for items you want to pre-empt before they ever show up)
 - **↩ Refunds mode** — a separate search for items you've actually returned (not to be confused with Price alerts above, which is about *current* price drops). Search by name or item code; results show refund amount, date, store, and a link to the return receipt. Sourced from a dedicated dataset that never touches the main search's price-trend data
 - **Weekly push notification** — every Wednesday and Saturday morning a push is sent if return candidates exist, linking directly to Price alerts; no notification if count is zero (no noise)
 
@@ -293,10 +293,9 @@ price_alert_claims:
   -- receipt_items.id rather than item_code so codeless items never collide
 
 price_alert_exclusions:
-  id, item_code, item_name,  -- exactly one of these is set
+  id, item_code, item_name,  -- manual form sets exactly one; the 🚫 row button sets both
   created_at
-  -- Managed only from the Excluded tab (no per-row button). Filtered
-  -- directly inside get_return_candidates() by item_code.
+  -- Filtered directly inside get_return_candidates() by item_code and name.
 
 -- View used by item search and price alerts (excludes returned items):
 item_purchase_history (joins receipts + receipt_items where final_price >= 0)

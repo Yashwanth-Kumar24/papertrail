@@ -80,18 +80,17 @@ function daysSince(dateStr: string): number {
 type ClaimBusy = { receiptItemId: string; type: 'return' | 'price_match' } | null
 type ClaimTarget = { id: string; receipt_id: string; purchase_date: string; final_price: number }
 
-// Renders under a purchase's Receipt link: action buttons if this specific
-// purchase is still elevated (worth acting on) — claimed purchases never
-// reach here at all, since getReturnCandidates() excludes them entirely —
-// or nothing if it's not elevated (e.g. it's the current/reference price).
-function ClaimActions({ p, latestPrice, busy, onClaim }: {
+// Renders under a purchase's Receipt link: Return is always offered, Match
+// only within the 30-day window. Not gated on price — any past purchase can
+// be resolved regardless of whether that specific one happens to be pricier
+// than today (the item only ever gets here because SOME purchase of it is).
+// Claimed purchases never reach here at all, since getReturnCandidates()
+// excludes them entirely.
+function ClaimActions({ p, busy, onClaim }: {
   p: ClaimTarget
-  latestPrice: number
   busy: ClaimBusy
   onClaim: (p: ClaimTarget, type: 'return' | 'price_match') => void
 }) {
-  if (p.final_price <= latestPrice) return null
-
   const canMatch  = daysSince(p.purchase_date) <= 30
   const busyHere  = busy?.receiptItemId === p.id
 
@@ -117,26 +116,45 @@ function ClaimActions({ p, latestPrice, busy, onClaim }: {
   )
 }
 
-function ReturnRow({ item, onClaimed }: { item: ItemHistory; onClaimed: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState<ClaimBusy>(null)
+function ReturnRow({ item, onChanged, onCheckRefunds }: {
+  item: ItemHistory
+  onChanged: () => void
+  onCheckRefunds: (itemCode: string) => void
+}) {
+  const [open,      setOpen]      = useState(true)
+  const [busy,      setBusy]      = useState<ClaimBusy>(null)
+  const [excluding, setExcluding] = useState(false)
   const latest    = item.purchases[0]
   const expensive = item.max_price_purchase!
   const savings   = item.max_price - item.latest_price
   const days      = daysSince(expensive.purchase_date)
 
   // Claims one specific line item (receipt_item_id) — never the item as a
-  // whole. Available on the headline purchase above AND on any other
-  // elevated purchase in the expanded history below, each independently.
-  // Once claimed, it drops out of the list on the next fetch entirely.
+  // whole. Available on any past purchase in the history below,
+  // independently. Once claimed, it drops out of the list on the next fetch.
   async function claim(p: ClaimTarget, type: 'return' | 'price_match') {
     if (busy) return
     setBusy({ receiptItemId: p.id, type })
     try {
       await claimPriceAlert(p.id, item.item_code, item.name, p.receipt_id, type)
-      onClaimed()
+      onChanged()
     } finally {
       setBusy(null)
+    }
+  }
+
+  // Excludes the whole item (by code) from Price Alerts permanently —
+  // reversible from the Excluded tab. Sends the name too (matching still
+  // only ever happens by code here) purely so the Excluded tab can show a
+  // readable name next to the code instead of a bare, unlabeled number.
+  async function exclude() {
+    if (excluding) return
+    setExcluding(true)
+    try {
+      await addPriceAlertExclusion(item.item_code, item.name)
+      onChanged()
+    } finally {
+      setExcluding(false)
     }
   }
 
@@ -145,10 +163,22 @@ function ReturnRow({ item, onClaimed }: { item: ItemHistory; onClaimed: () => vo
       <tr onClick={() => setOpen(o => !o)} style={{cursor:'pointer'}}>
         <td><span className="code-badge">{item.item_code ?? '—'}</span></td>
         <td>
-          <div style={{fontWeight:500}}>{item.name}</div>
-          <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8}}>
+            <div>
+              <div style={{fontWeight:500}}>{item.name}</div>
+              <div style={{fontSize:11,color:'var(--ink3)',marginTop:2}}>{item.purchases.length} purchases</div>
+            </div>
+            <button
+              onClick={e => { e.stopPropagation(); exclude() }}
+              disabled={excluding}
+              title="Never show this item in Price Alerts again"
+              style={{fontSize:14,lineHeight:1,padding:'3px 6px',borderRadius:6,border:'1px solid var(--border2)',background:'none',cursor: excluding ? 'default' : 'pointer',flexShrink:0,opacity: excluding ? 0.5 : 1}}
+            >
+              {excluding ? '…' : '🚫'}
+            </button>
+          </div>
         </td>
-        {/* The one specific purchase the Receipt/actions column acts on */}
+        {/* Highest-priced still-unclaimed purchase — a summary figure only, no action here anymore */}
         <td style={{fontFamily:'var(--mono)',fontSize:13}}>
           {money(expensive.final_price)}
           <div style={{fontSize:11,color:'var(--ink3)'}}>{fmt(expensive.purchase_date)}</div>
@@ -165,14 +195,14 @@ function ReturnRow({ item, onClaimed }: { item: ItemHistory; onClaimed: () => vo
         <td style={{fontFamily:'var(--mono)',fontWeight:700,color:'var(--green)'}}>
           −{money(savings)}
         </td>
-        {/* Receipt link + claim actions, grouped together, for this purchase */}
+        {/* Jump to Refunds pre-searched by this item's code — the way to check whether it's already been returned */}
         <td onClick={e => e.stopPropagation()}>
-          <div style={{display:'flex',flexDirection:'column',gap:4,alignItems:'flex-start'}}>
-            <Link href={`/receipts/${expensive.receipt_id}`} prefetch={false} style={{color:'var(--green)',fontSize:12,fontWeight:500}}>
-              Return receipt →
-            </Link>
-            <ClaimActions p={expensive} latestPrice={item.latest_price} busy={busy} onClaim={claim}/>
-          </div>
+          <button
+            onClick={() => onCheckRefunds(item.item_code!)}
+            style={{background:'none',border:'none',padding:0,color:'var(--green)',fontSize:12,fontWeight:500,cursor:'pointer',fontFamily:'var(--sans)'}}
+          >
+            ↩ Check refunds →
+          </button>
         </td>
       </tr>
       {open && item.purchases.map((p, i) => (
@@ -189,7 +219,7 @@ function ReturnRow({ item, onClaimed }: { item: ItemHistory; onClaimed: () => vo
                 Receipt →
               </Link>
               {/* The current/reference row (i===0) has nothing to claim against itself */}
-              {i !== 0 && <ClaimActions p={p} latestPrice={item.latest_price} busy={busy} onClaim={claim}/>}
+              {i !== 0 && <ClaimActions p={p} busy={busy} onClaim={claim}/>}
             </div>
           </td>
         </tr>
@@ -267,9 +297,12 @@ function ExclusionRow({ exclusion, onRemoved }: { exclusion: PriceAlertExclusion
   return (
     <tr>
       <td>
-        {exclusion.item_code
-          ? <span className="code-badge">{exclusion.item_code}</span>
-          : <span style={{fontStyle:'italic'}}>{exclusion.item_name}</span>}
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {exclusion.item_code && <span className="code-badge">{exclusion.item_code}</span>}
+          {exclusion.item_name && (
+            <span style={exclusion.item_code ? undefined : { fontStyle:'italic' }}>{exclusion.item_name}</span>
+          )}
+        </div>
       </td>
       <td style={{fontSize:11,color:'var(--ink3)'}}>{exclusion.item_code ? 'by code' : 'by name'}</td>
       <td>
@@ -449,11 +482,16 @@ function ItemsPageContent() {
     }).finally(() => setRetLoading(false))
   }, [])
 
-  // Restore price alerts mode when navigating back from a receipt
+  // Restore price alerts / refunds-search mode when navigating back from a
+  // receipt (e.g. after clicking "↩ Check refunds →" then a Receipt link).
   useEffect(() => {
     if (searchParams.get('mode') === 'returns') {
       setMode('returns')
       loadPriceAlerts()
+    } else if (searchParams.get('mode') === 'refunds') {
+      setMode('refunds')
+      const q = searchParams.get('q')
+      if (q) { setRefundQuery(q); runRefundSearch(q) }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // run once on mount only
@@ -469,6 +507,15 @@ function ItemsPageContent() {
   function enterRefunds() {
     setMode('refunds')
     router.replace('/prices?mode=refunds')
+  }
+
+  // From a Price Alerts row: jump to Refunds pre-searched by item code, so
+  // you can check whether it's already gone through as an actual return.
+  function enterRefundsFor(itemCode: string) {
+    setMode('refunds')
+    setRefundQuery(itemCode)
+    runRefundSearch(itemCode)
+    router.replace(`/prices?mode=refunds&q=${encodeURIComponent(itemCode)}`)
   }
 
   return (
@@ -655,7 +702,7 @@ function ItemsPageContent() {
                 </div>
               </div>
               <div style={{padding:'10px 14px',background:'#FEF3C7',borderRadius:'var(--r)',fontSize:13,color:'#92400E',marginBottom:12}}>
-                The buttons beside each Receipt link act on that one purchase only. <strong>↩ Return</strong> is always available; <strong>↺ Match</strong> only shows within Costco&rsquo;s ~30-day price-adjustment window. Claiming removes it from this list — see the <strong>✓ Claimed</strong> tab to review or undo past claims.
+                Each purchase gets its own <strong>↩ Return</strong> (always available) / <strong>↺ Match</strong> (only within Costco&rsquo;s ~30-day price-adjustment window) — claiming one removes just that purchase, see the <strong>✓ Claimed</strong> tab to review or undo. <strong>↩ Check refunds →</strong> jumps to Refunds pre-searched by this item&rsquo;s code, to see if it&rsquo;s already gone through. <strong>🚫</strong> permanently excludes the whole item — undo from the <strong>Excluded</strong> tab.
               </div>
               <div className="tbl-wrap">
                 <table>
@@ -666,11 +713,11 @@ function ItemsPageContent() {
                       <th>You paid</th>
                       <th>Now</th>
                       <th>Save</th>
-                      <th>Receipt</th>
+                      <th>Refunds</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {visible.map(item => <ReturnRow key={`${item.item_code ?? item.name}:${item.max_price_purchase!.id}`} item={item} onClaimed={loadPriceAlerts}/>)}
+                    {visible.map(item => <ReturnRow key={`${item.item_code ?? item.name}:${item.max_price_purchase!.id}`} item={item} onChanged={loadPriceAlerts} onCheckRefunds={enterRefundsFor}/>)}
                   </tbody>
                 </table>
                 {visible.length === 0 && (
